@@ -1,0 +1,5 @@
+{
+  "name": "LogLayer Pro",
+  "description": "A professional-grade log analysis tool inspired by VS Code and Photoshop, featuring a unique layer-based processing system for handling massive log files.",
+  "requestFramePermissions": []
+}
