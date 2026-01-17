@@ -1,3 +1,4 @@
+
 import { LogProcessor, LogLine, LayerStats } from '../types';
 
 export const highlightProcessor: LogProcessor = (lines, layer, chunkSize) => {
@@ -15,23 +16,45 @@ export const highlightProcessor: LogProcessor = (lines, layer, chunkSize) => {
     if (wholeWord) {
       pattern = `\\b${pattern}\\b`;
     }
+    // matchAll requires global flag
     re = new RegExp(pattern, caseSensitive ? 'g' : 'gi');
   } catch (e) {
     return { processedLines: lines, stats: { count: 0, distribution } };
   }
 
+  // Handle mixed string and LogLine types
   const processedLines = lines.map((line, i) => {
-    const matches = Array.from(line.content.matchAll(re));
+    // Determine content to match against
+    const content = typeof line === 'string' ? line : (line.displayContent || line.content);
+    const matches = Array.from(content.matchAll(re));
+    
     if (matches.length > 0) {
       matchCount += matches.length;
       distribution[Math.floor(i / chunkSize)]++;
-      const highlights = matches.map(m => ({ 
-        start: m.index || 0, 
-        end: (m.index || 0) + m[0].length, 
-        color, 
-        opacity 
-      }));
-      return { ...line, highlights: [...(line.highlights || []), ...highlights] };
+      
+      const highlights = matches.map(m => {
+        // cast to any to avoid 'unknown' index property error
+        const matchIndex = (m as any).index ?? 0;
+        return { 
+          start: matchIndex, 
+          end: matchIndex + m[0].length, 
+          color, 
+          opacity 
+        };
+      });
+
+      if (typeof line === 'string') {
+        return {
+          index: i,
+          content: line,
+          highlights
+        } as LogLine;
+      }
+      
+      return { 
+        ...line, 
+        highlights: [...(line.highlights || []), ...highlights] 
+      } as LogLine;
     }
     return line;
   });

@@ -1,3 +1,4 @@
+
 import { LogProcessor, LogLine, LayerStats } from '../types';
 
 export const timeRangeProcessor: LogProcessor = (lines, layer, chunkSize) => {
@@ -35,7 +36,9 @@ export const timeRangeProcessor: LogProcessor = (lines, layer, chunkSize) => {
   }
 
   const processedLines = lines.filter((line, i) => {
-    const match = line.content.match(timeRegex);
+    // Handle string or LogLine type for content access
+    const content = typeof line === 'string' ? line : line.content;
+    const match = content.match(timeRegex);
     if (!match) return false;
 
     // 提取时间字符串：优先取第一个捕获组，否则取全文

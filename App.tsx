@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { LogViewer } from './components/LogViewer';
@@ -26,7 +27,7 @@ const App: React.FC = () => {
   
   // Data State
   const [rawLogs, setRawLogs] = useState<string[]>([]);
-  const [processedLogs, setProcessedLogs] = useState<LogLine[]>([]);
+  const [processedLogs, setProcessedLogs] = useState<Array<LogLine | string>>([]);
   const [layerStats, setLayerStats] = useState<Record<string, { count: number; distribution: number[] }>>({});
   const [rawStats, setRawStats] = useState<Record<string, number[]>>({});
 
@@ -49,6 +50,23 @@ const App: React.FC = () => {
 
   const loadingAbortController = useRef<AbortController | null>(null);
   const processingTaskId = useRef<number>(0);
+  
+  // Use a ref to access the latest layers inside effects without triggering them
+  const layersRef = useRef<LogLayer[]>(layers);
+  useEffect(() => {
+    layersRef.current = layers;
+  }, [layers]);
+
+  // Compute a functional hash of the layers that actually affect log processing
+  const layersFunctionalHash = useMemo(() => {
+    return JSON.stringify(layers.map(l => [
+      l.id, 
+      l.enabled, 
+      l.groupId, 
+      l.type, 
+      l.config
+    ]));
+  }, [layers]);
 
   // Helper to update layers with history
   const updateLayers = useCallback((updater: LogLayer[] | ((prev: LogLayer[]) => LogLayer[]), skipHistory = false) => {
@@ -126,7 +144,6 @@ const App: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [undo, redo, isFindVisible, isGoToLineVisible]);
 
-  // 初始化加载预设并应用默认值
   useEffect(() => {
     const saved = localStorage.getItem('loglayer_presets');
     let initialPresets: LayerPreset[] = [];
@@ -164,6 +181,8 @@ const App: React.FC = () => {
     const file = event.target.files?.[0];
     if (!file) return;
 
+    event.target.value = '';
+
     if (loadingAbortController.current) loadingAbortController.current.abort();
     loadingAbortController.current = new AbortController();
     
@@ -178,8 +197,9 @@ const App: React.FC = () => {
     const decoder = new TextDecoder();
     let partialLine = '';
     let loadedBytes = 0;
-    const batchSize = 500000; 
-    let currentBatch: string[] = [];
+    
+    const allLines: string[] = [];
+    const updateFrequency = 100000;
 
     try {
       while (true) {
@@ -192,20 +212,19 @@ const App: React.FC = () => {
         partialLine = lines.pop() || '';
 
         for (let i = 0; i < lines.length; i++) {
-          currentBatch.push(lines[i]);
-          if (currentBatch.length >= batchSize) {
-            setRawLogs(prev => prev.concat(currentBatch)); 
-            currentBatch = [];
+          allLines.push(lines[i]);
+          if (allLines.length % updateFrequency === 0) {
             setLoadingProgress(Math.round((loadedBytes / file.size) * 100));
             await new Promise(resolve => setTimeout(resolve, 0));
           }
         }
       }
 
-      if (partialLine || currentBatch.length > 0) {
-        if (partialLine) currentBatch.push(partialLine);
-        setRawLogs(prev => prev.concat(currentBatch));
+      if (partialLine) {
+        allLines.push(partialLine);
       }
+      
+      setRawLogs(allLines);
       setLoadingProgress(100);
     } catch (err) {
       if ((err as Error).name !== 'AbortError') console.error("Error reading file:", err);
@@ -261,24 +280,35 @@ const App: React.FC = () => {
       return true;
     });
 
-    let activeLines: LogLine[] | null = null;
+    if (activeLayers.length === 0) {
+      setProcessedLogs(currentRawLogs);
+      setLayerStats(stats);
+      setIsLayerProcessing(false);
+      return;
+    }
+
+    let activeLines: Array<LogLine | string> | null = null;
     let isObjectified = false;
 
     for (const layer of activeLayers) {
       if (taskId !== processingTaskId.current) return;
       const startTime = performance.now();
+      
       const needsObject = layer.type === LayerType.HIGHLIGHT || layer.type === LayerType.TRANSFORM;
 
       if (needsObject && !isObjectified) {
-        const source = activeLines ? activeLines : null;
-        const totalToProcess = source ? source.length : currentRawLogs.length;
+        const source = activeLines ? activeLines : currentRawLogs;
+        const totalToProcess = source.length;
         const newLines: LogLine[] = new Array(totalToProcess);
         const step = 200000;
         for (let i = 0; i < totalToProcess; i += step) {
           if (taskId !== processingTaskId.current) return;
           const end = Math.min(i + step, totalToProcess);
           for (let j = i; j < end; j++) {
-            newLines[j] = source ? source[j] : { index: j, content: currentRawLogs[j] };
+            const line = source[j];
+            newLines[j] = typeof line === 'string' 
+              ? { index: j, content: line } 
+              : line;
           }
           if (performance.now() - startTime > 30) await new Promise(r => setTimeout(r, 0));
         }
@@ -286,7 +316,7 @@ const App: React.FC = () => {
         isObjectified = true;
       }
 
-      const input: LogLine[] = activeLines || currentRawLogs.map((c, i) => ({ index: i, content: c }));
+      const input: Array<LogLine | string> = activeLines || currentRawLogs;
       const chunkSize = Math.max(1, Math.ceil(input.length / 20));
       const { processedLines, stats: layerResult } = processLayer(input, layer, chunkSize);
       activeLines = processedLines;
@@ -295,11 +325,7 @@ const App: React.FC = () => {
       await new Promise(r => setTimeout(r, 5));
     }
 
-    let finalLines: LogLine[] = activeLines || [];
-    if (!activeLines && currentRawLogs.length > 0) {
-        finalLines = new Array(currentRawLogs.length);
-        for(let i=0; i<currentRawLogs.length; i++) finalLines[i] = { index: i, content: currentRawLogs[i] };
-    }
+    let finalLines: Array<LogLine | string> = activeLines || currentRawLogs;
 
     if (taskId === processingTaskId.current) {
       setProcessedLogs(finalLines);
@@ -313,10 +339,10 @@ const App: React.FC = () => {
   useEffect(() => {
     const debounceTime = rawLogs.length > 5000000 ? 1500 : (rawLogs.length > 1000000 ? 800 : 250);
     const timer = setTimeout(() => {
-      runAsyncProcessing(rawLogs, layers, searchQuery, searchConfig);
+      runAsyncProcessing(rawLogs, layersRef.current, searchQuery, searchConfig);
     }, debounceTime);
     return () => clearTimeout(timer);
-  }, [rawLogs, layers, searchQuery, searchConfig, runAsyncProcessing]);
+  }, [rawLogs, layersFunctionalHash, searchQuery, searchConfig, runAsyncProcessing]);
 
   const addLayer = (type: LayerType) => {
     const newId = Math.random().toString(36).substr(2, 9);
@@ -404,20 +430,28 @@ const App: React.FC = () => {
 
     if (direction === 'next') {
       for (let i = startIndex + 1; i < processedLogs.length; i++) {
-        if (re.test(processedLogs[i].content)) { nextIdx = i; break; }
+        const line = processedLogs[i];
+        const content = typeof line === 'string' ? line : line.content;
+        if (re.test(content)) { nextIdx = i; break; }
       }
       if (nextIdx === -1) {
         for (let i = 0; i <= startIndex; i++) {
-          if (re.test(processedLogs[i].content)) { nextIdx = i; break; }
+          const line = processedLogs[i];
+          const content = typeof line === 'string' ? line : line.content;
+          if (re.test(content)) { nextIdx = i; break; }
         }
       }
     } else {
       for (let i = startIndex - 1; i >= 0; i--) {
-        if (re.test(processedLogs[i].content)) { nextIdx = i; break; }
+        const line = processedLogs[i];
+        const content = typeof line === 'string' ? line : line.content;
+        if (re.test(content)) { nextIdx = i; break; }
       }
       if (nextIdx === -1) {
         for (let i = processedLogs.length - 1; i >= startIndex; i--) {
-          if (re.test(processedLogs[i].content)) { nextIdx = i; break; }
+          const line = processedLogs[i];
+          const content = typeof line === 'string' ? line : line.content;
+          if (re.test(content)) { nextIdx = i; break; }
         }
       }
     }
@@ -462,7 +496,9 @@ const App: React.FC = () => {
     } catch (e) { return 0; }
     let count = 0;
     for (let i = 0; i <= currentMatchIndex; i++) {
-      if (re.test(processedLogs[i].content)) count++;
+      const line = processedLogs[i];
+      const content = typeof line === 'string' ? line : line.content;
+      if (re.test(content)) count++;
     }
     return count;
   }, [currentMatchIndex, searchQuery, searchConfig, processedLogs]);
@@ -557,18 +593,6 @@ const App: React.FC = () => {
             <HelpPanel />
           ) : (
             <>
-              {isLayerProcessing && (
-                <div className="absolute inset-0 bg-black/40 z-20 flex items-center justify-center pointer-events-none backdrop-blur-[2px]">
-                  <div className="bg-[#252526] px-8 py-5 rounded border border-[#444] shadow-2xl flex flex-col items-center space-y-4">
-                    <div className="w-8 h-8 border-3 border-blue-500 border-t-transparent animate-spin rounded-full"></div>
-                    <div className="flex flex-col items-center">
-                      <span className="text-[12px] font-black tracking-[0.2em] text-blue-400 uppercase">正在更新处理管道</span>
-                      <span className="text-[10px] text-gray-500 font-mono mt-2 italic">正在优化 {processedLogs.length.toLocaleString()} 行数据...</span>
-                    </div>
-                  </div>
-                </div>
-              )}
-              
               {isFindVisible && (
                 <EditorFindWidget 
                   query={searchQuery}
@@ -617,7 +641,13 @@ const App: React.FC = () => {
           )}
         </div>
       </div>
-      <StatusBar lines={processedLogs.length} totalLines={rawLogs.length} size={fileSize} isProcessing={isProcessing || isLayerProcessing} />
+      <StatusBar 
+        lines={processedLogs.length} 
+        totalLines={rawLogs.length} 
+        size={fileSize} 
+        isProcessing={isProcessing || isLayerProcessing} 
+        isLayerProcessing={isLayerProcessing}
+      />
     </div>
   );
 };

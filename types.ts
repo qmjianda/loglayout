@@ -63,10 +63,10 @@ export interface LogLine {
 }
 
 export type LogProcessor = (
-  lines: LogLine[], 
+  lines: Array<LogLine | string>, 
   layer: LogLayer, 
   chunkSize: number
 ) => { 
-  processedLines: LogLine[]; 
+  processedLines: Array<LogLine | string>; 
   stats: LayerStats;
 };

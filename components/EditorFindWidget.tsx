@@ -1,4 +1,5 @@
-import React, { useRef, useEffect } from 'react';
+
+import React, { useRef, useEffect, useState, useCallback } from 'react';
 
 interface EditorFindWidgetProps {
   query: string;
@@ -22,6 +23,9 @@ export const EditorFindWidget: React.FC<EditorFindWidgetProps> = ({
   onClose
 }) => {
   const inputRef = useRef<HTMLInputElement>(null);
+  const widgetRef = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(400);
+  const [isResizing, setIsResizing] = useState(false);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -37,9 +41,46 @@ export const EditorFindWidget: React.FC<EditorFindWidgetProps> = ({
     }
   };
 
+  const startResizing = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizing(true);
+    
+    const startX = e.clientX;
+    const startWidth = width;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      // Since it's anchored to the right, dragging left increases width
+      const delta = startX - moveEvent.clientX;
+      const newWidth = Math.max(300, Math.min(window.innerWidth * 0.8, startWidth + delta));
+      setWidth(newWidth);
+    };
+
+    const onMouseUp = () => {
+      setIsResizing(false);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  }, [width]);
+
   return (
-    <div className="absolute top-2 right-8 z-30 bg-[#252526] border border-[#454545] shadow-2xl rounded flex items-center p-1 space-x-1 animate-in slide-in-from-top-2 duration-150">
-      <div className="flex items-center bg-[#3c3c3c] border border-blue-500/30 rounded overflow-hidden min-w-[280px]">
+    <div 
+      ref={widgetRef}
+      style={{ width: `${width}px` }}
+      className={`absolute top-2 right-8 z-30 bg-[#252526] border border-[#454545] shadow-2xl rounded flex items-center p-1 space-x-1 animate-in slide-in-from-top-2 duration-150 ${isResizing ? 'ring-1 ring-blue-500/50' : ''}`}
+    >
+      {/* Resizer Handle */}
+      <div 
+        onMouseDown={startResizing}
+        className="absolute left-0 top-0 bottom-0 w-1.5 cursor-ew-resize hover:bg-blue-500/30 transition-colors z-40 group"
+        title="拖动调整宽度"
+      >
+        <div className="absolute left-0.5 top-1/2 -translate-y-1/2 w-[1px] h-4 bg-gray-600 group-hover:bg-blue-400" />
+      </div>
+
+      <div className="flex-1 flex items-center bg-[#3c3c3c] border border-blue-500/30 rounded overflow-hidden ml-1">
         <input
           ref={inputRef}
           type="text"
@@ -50,7 +91,7 @@ export const EditorFindWidget: React.FC<EditorFindWidgetProps> = ({
           className="bg-transparent text-white text-xs px-2 py-1 w-full focus:outline-none"
         />
         
-        <div className="flex items-center pr-1 bg-[#3c3c3c]">
+        <div className="flex items-center pr-1 bg-[#3c3c3c] shrink-0">
           <button
             onClick={() => onConfigChange(prev => ({ ...prev, caseSensitive: !prev.caseSensitive }))}
             className={`w-5 h-5 flex items-center justify-center rounded text-[10px] transition-colors ${config.caseSensitive ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-[#555]'}`}
@@ -75,11 +116,11 @@ export const EditorFindWidget: React.FC<EditorFindWidgetProps> = ({
         </div>
       </div>
 
-      <div className="flex items-center px-2 border-r border-white/10 text-[10px] text-gray-500 font-mono min-w-[60px] justify-center">
+      <div className="flex items-center px-2 border-r border-white/10 text-[10px] text-gray-500 font-mono min-w-[70px] justify-center shrink-0">
         {matchCount > 0 ? `${currentMatch} / ${matchCount}` : '无结果'}
       </div>
 
-      <div className="flex items-center">
+      <div className="flex items-center shrink-0">
         <button
           onClick={() => onNavigate('prev')}
           className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-white hover:bg-[#3c3c3c] rounded transition-colors"

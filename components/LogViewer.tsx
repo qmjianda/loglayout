@@ -2,7 +2,7 @@ import React, { useRef, useState, useEffect } from 'react';
 import { LogLine } from '../types';
 
 interface LogViewerProps {
-  lines: LogLine[];
+  lines: Array<LogLine | string>;
   searchQuery: string;
   searchConfig: { regex: boolean; caseSensitive: boolean };
   scrollToIndex?: number | null;
@@ -36,7 +36,7 @@ export const LogViewer: React.FC<LogViewerProps> = ({
 
   useEffect(() => {
     if (scrollToIndex !== null && scrollToIndex !== undefined && containerRef.current) {
-      const targetLine = scrollToIndex < 1 && lines.length > 1000 ? Math.floor(scrollToIndex * lines.length) : scrollToIndex;
+      const targetLine = scrollToIndex;
       const targetScroll = Math.max(0, targetLine * lineHeight - (viewportHeight / 3)); // Scroll to roughly 1/3 down the view
       containerRef.current.scrollTo({ top: targetScroll, behavior: 'auto' });
     }
@@ -46,7 +46,11 @@ export const LogViewer: React.FC<LogViewerProps> = ({
   const endIndex = Math.min(lines.length, Math.floor((scrollTop + viewportHeight) / lineHeight) + buffer);
   const visibleLines = lines.slice(startIndex, endIndex);
 
-  const renderLine = (line: LogLine) => {
+  const renderLineContent = (line: LogLine | string) => {
+    if (typeof line === 'string') {
+      return <span>{line}</span>;
+    }
+
     const content = line.displayContent || line.content;
     
     if (!line.highlights || line.highlights.length === 0) {
@@ -61,11 +65,9 @@ export const LogViewer: React.FC<LogViewerProps> = ({
     for (let i = 0; i < sorted.length; i++) {
       const h = sorted[i];
       
-      // Ensure we don't move backwards and only process within bounds
       if (h.start >= content.length) break;
       if (h.start < lastIndex) continue; // Skip overlaps for simple rendering
 
-      // Add text before the highlight
       if (h.start > lastIndex) {
         elements.push(<span key={`t-${i}`}>{content.substring(lastIndex, h.start)}</span>);
       }
@@ -103,20 +105,23 @@ export const LogViewer: React.FC<LogViewerProps> = ({
           {visibleLines.map((line, idx) => {
             const absoluteIdx = startIndex + idx;
             const isHighlighted = highlightedIndex === absoluteIdx;
+            const isLogLine = typeof line !== 'string';
+            const originalIndex = isLogLine ? line.index : absoluteIdx;
+            const isMarked = isLogLine && line.isMarked;
             
             return (
               <div 
-                key={`${line.index}`} 
+                key={`${originalIndex}-${idx}`} 
                 onClick={() => onLineClick?.(absoluteIdx)}
                 className={`flex hover:bg-[#2a2d2e] px-4 h-[20px] items-center whitespace-pre border-l-2 transition-colors cursor-default
-                  ${line.isMarked ? 'border-yellow-500' : 'border-transparent'}
+                  ${isMarked ? 'border-yellow-500' : 'border-transparent'}
                   ${isHighlighted ? 'bg-[#3b82f6]/20' : ''}`}
                 style={isHighlighted ? { backgroundColor: 'rgba(59, 130, 246, 0.2)' } : undefined}
               >
                 <div className={`w-14 text-right pr-4 shrink-0 select-none text-[10px] ${isHighlighted ? 'text-blue-400 font-bold' : 'text-gray-600'}`}>
-                  {line.index + 1}
+                  {(originalIndex + 1).toLocaleString()}
                 </div>
-                <div className="flex-1 overflow-hidden truncate text-[#d4d4d4]">{renderLine(line)}</div>
+                <div className="flex-1 overflow-hidden truncate text-[#d4d4d4]">{renderLineContent(line)}</div>
               </div>
             );
           })}

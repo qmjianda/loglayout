@@ -1,3 +1,4 @@
+
 import { LogProcessor, LogLine, LayerStats } from '../types';
 
 export const transformProcessor: LogProcessor = (lines, layer, chunkSize) => {
@@ -21,14 +22,25 @@ export const transformProcessor: LogProcessor = (lines, layer, chunkSize) => {
   }
 
   const processedLines = lines.map((line, i) => {
-    const currentText = line.displayContent || line.content;
+    // Handle string or LogLine type and use displayContent if it exists from previous transforms
+    const content = typeof line === 'string' ? line : line.content;
+    const currentText = (typeof line !== 'string' && line.displayContent) ? line.displayContent : content;
     const matches = currentText.match(re);
 
     if (matches) {
       matchCount += matches.length;
       distribution[Math.floor(i / chunkSize)]++;
       const newContent = currentText.replace(re, replaceWith);
-      return { ...line, displayContent: newContent };
+      
+      if (typeof line === 'string') {
+        return {
+          index: i,
+          content: line,
+          displayContent: newContent
+        } as LogLine;
+      }
+      
+      return { ...line, displayContent: newContent } as LogLine;
     }
     return line;
   });

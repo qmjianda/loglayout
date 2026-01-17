@@ -1,3 +1,4 @@
+
 import { LogProcessor, LogLine, LayerStats } from '../types';
 
 export const levelProcessor: LogProcessor = (lines, layer, chunkSize) => {
@@ -12,7 +13,9 @@ export const levelProcessor: LogProcessor = (lines, layer, chunkSize) => {
   const levelRegex = new RegExp(`\\b(${levels.join('|')})\\b`, 'i');
 
   const processedLines = lines.filter((line, i) => {
-    const matches = levelRegex.test(line.content);
+    // Handle string or LogLine type for content access
+    const content = typeof line === 'string' ? line : line.content;
+    const matches = levelRegex.test(content);
     if (matches) {
       matchCount++;
       distribution[Math.floor(i / chunkSize)]++;

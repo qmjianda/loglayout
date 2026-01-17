@@ -1,21 +1,22 @@
 #!/bin/bash
 
-# LogLayer Pro Linux 打包脚本 (无需 NPM)
-# 该脚本将应用打包为可在 Linux 上运行的静态资源包
+# LogLayer Pro Linux Offline Packaging Script (No NPM required)
+# This script bundles all dependencies for zero-internet environments.
 
 APP_NAME="loglayer-pro"
 BUILD_DIR="dist_linux"
+VENDOR_DIR="$BUILD_DIR/vendor"
 ESBUILD_VERSION="0.20.1"
 
-echo "📦 开始打包 $APP_NAME..."
+echo "📦 Starting OFFLINE packaging for $APP_NAME..."
 
-# 1. 创建输出目录
+# 1. Create directory structure
 rm -rf $BUILD_DIR
-mkdir -p $BUILD_DIR
+mkdir -p $VENDOR_DIR
 
-# 2. 检查并获取 esbuild (单二进制文件，无需 node)
+# 2. Get esbuild compiler (standalone binary)
 if ! command -v ./esbuild &> /dev/null; then
-    echo "获取 esbuild 编译器..."
+    echo "⬇️ Downloading esbuild compiler..."
     OS_TYPE=$(uname -s | tr '[:upper:]' '[:lower:]')
     ARCH_TYPE=$(uname -m)
     
@@ -25,46 +26,91 @@ if ! command -v ./esbuild &> /dev/null; then
     curl -fsSL "https://esbuild.github.io/dl/v$ESBUILD_VERSION" | sh
 fi
 
-# 3. 编译并打包 index.tsx
-echo "🚀 编译 TypeScript 资源..."
+# 3. Download Dependencies for Offline Use
+echo "⬇️ Downloading React, React-DOM and Tailwind for offline use..."
+# We download the ESM versions of React/React-DOM
+curl -sL "https://esm.sh/react@18.2.0?bundle" -o "$VENDOR_DIR/react.js"
+curl -sL "https://esm.sh/react-dom@18.2.0/client?bundle" -o "$VENDOR_DIR/react-dom-client.js"
+curl -sL "https://esm.sh/react-dom@18.2.0?bundle" -o "$VENDOR_DIR/react-dom.js"
+curl -sL "https://esm.sh/react@18.2.0/jsx-runtime?bundle" -o "$VENDOR_DIR/jsx-runtime.js"
+# Standalone Tailwind Play CDN (Works offline once loaded locally)
+curl -sL "https://cdn.tailwindcss.com/3.4.1" -o "$VENDOR_DIR/tailwind.js"
+
+# 4. Compile index.tsx
+echo "🚀 Bundling Application Code..."
 ./esbuild index.tsx \
     --bundle \
     --minify \
-    --sourcemap \
     --format=esm \
     --outfile=$BUILD_DIR/bundle.js \
     --define:process.env.NODE_ENV='"production"' \
     --external:react \
-    --external:react-dom
+    --external:react-dom \
+    --external:react-dom/client \
+    --external:react/jsx-runtime
 
-# 4. 准备 HTML 文件
-echo "📄 处理 HTML..."
+# 5. Prepare HTML
+echo "📄 Patching index.html for local paths..."
 cp index.html $BUILD_DIR/index.html
 
-# 修改 index.html 以适应本地生产路径
-# 将 <script type="module" src="index.tsx"></script> 替换为打包后的 bundle.js
-sed -i 's/index.tsx/bundle.js/g' $BUILD_DIR/index.html
-
-# 5. 生成简单的 Python 启动脚本 (Linux 通用)
-cat > $BUILD_DIR/run.sh <<EOF
-#!/bin/bash
-echo "----------------------------------------"
-echo "LogLayer Pro 正在启动..."
-echo "请在浏览器中打开: http://localhost:8080"
-echo "----------------------------------------"
-# 优先使用 python3, 其次 python
-if command -v python3 &> /dev/null; then
-    python3 -m http.server 8080
-elif command -v python &> /dev/null; then
-    python -m SimpleHTTPServer 8080
-else
-    echo "错误: 未找到 Python，请手动将此目录部署到任意 Web 服务器。"
-fi
+# Rewrite Import Map and Scripts to use local vendor files
+# We use a temp file for safer sed operations
+cat > $BUILD_DIR/index.html <<EOF
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LogLayer Pro (Offline)</title>
+    <script src="./vendor/tailwind.js"></script>
+    <script type="importmap">
+    {
+      "imports": {
+        "react": "./vendor/react.js",
+        "react-dom": "./vendor/react-dom.js",
+        "react-dom/client": "./vendor/react-dom-client.js",
+        "react/jsx-runtime": "./vendor/jsx-runtime.js"
+      }
+    }
+    </script>
+    <style>
+      body, html { margin: 0; padding: 0; background-color: #0d0d0d; color: #cccccc; font-family: 'Inter', sans-serif; overflow: hidden; height: 100vh; width: 100vw; }
+      #root { height: 100%; width: 100%; display: flex; flex-direction: column; }
+      ::-webkit-scrollbar { width: 10px; height: 10px; }
+      ::-webkit-scrollbar-track { background: #1e1e1e; }
+      ::-webkit-scrollbar-thumb { background: #333333; }
+      ::-webkit-scrollbar-thumb:hover { background: #444444; }
+      .select-text { user-select: text !important; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="module" src="bundle.js"></script>
+</body>
+</html>
 EOF
+
+# 6. Generate Clean run.sh (Force Unix Line Endings)
+echo "📜 Generating run.sh..."
+printf "#!/bin/bash\n\n" > $BUILD_DIR/run.sh
+printf "echo \"----------------------------------------\"\n" >> $BUILD_DIR/run.sh
+printf "echo \"LogLayer Pro (OFFLINE MODE) is starting...\"\n" >> $BUILD_DIR/run.sh
+printf "echo \"Target: http://localhost:8080\"\n" >> $BUILD_DIR/run.sh
+printf "echo \"----------------------------------------\"\n" >> $BUILD_DIR/run.sh
+printf "if command -v python3 &> /dev/null; then\n" >> $BUILD_DIR/run.sh
+printf "    python3 -m http.server 8080\n" >> $BUILD_DIR/run.sh
+printf "elif command -v python &> /dev/null; then\n" >> $BUILD_DIR/run.sh
+printf "    python -m SimpleHTTPServer 8080\n" >> $BUILD_DIR/run.sh
+printf "else\n" >> $BUILD_DIR/run.sh
+printf "    echo \"Error: No Python found.\"\n" >> $BUILD_DIR/run.sh
+printf "fi\n" >> $BUILD_DIR/run.sh
+
+# Force remove any CR (\r) characters just in case the printf was handled oddly on Windows
+sed -i 's/\r$//' $BUILD_DIR/run.sh
 
 chmod +x $BUILD_DIR/run.sh
 
-# 6. 完成
-echo "✅ 打包完成！"
-echo "目录: $BUILD_DIR"
-echo "使用方法: 将 $BUILD_DIR 文件夹拷贝到 Linux 系统，运行 ./run.sh 即可。"
+echo "✅ ALL-IN-ONE Package created at: $BUILD_DIR"
+echo "Instructions:"
+echo "1. Copy $BUILD_DIR to your offline Linux machine."
+echo "2. Run ./run.sh"
