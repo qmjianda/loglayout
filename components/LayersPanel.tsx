@@ -25,15 +25,15 @@ const CONFIG_COMPONENTS: Partial<Record<LayerType, React.FC<any>>> = {
   [LayerType.TRANSFORM]: Configs.TransformConfig,
 };
 
-export const LayersPanel: React.FC<LayersPanelProps> = ({ 
-  layers, stats, selectedId, onSelect, onRemove, onToggle, onUpdate, onDrop 
+export const LayersPanel: React.FC<LayersPanelProps> = ({
+  layers, stats, selectedId, onSelect, onRemove, onToggle, onUpdate, onDrop
 }) => {
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [draggedLayerId, setDraggedLayerId] = useState<string | null>(null);
   const [dropPosition, setDropPosition] = useState<'inside' | 'before' | 'after' | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isInputActive, setIsInputActive] = useState(false);
-  
+
   const [hoveredLayerId, setHoveredLayerId] = useState<string | null>(null);
   const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
 
@@ -43,11 +43,11 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
       e.preventDefault();
       return;
     }
-    
+
     setDraggedLayerId(id);
     e.dataTransfer.setData('layerId', id);
     e.dataTransfer.effectAllowed = 'move';
-    
+
     const currentTarget = e.currentTarget as HTMLElement;
     currentTarget.classList.add('dragging');
   };
@@ -66,14 +66,14 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const y = e.clientY - rect.top;
     setDragOverId(id);
-    
+
     if (type === LayerType.FOLDER) {
-        if (y > rect.height * 0.25 && y < rect.height * 0.75) setDropPosition('inside');
-        else if (y < rect.height / 2) setDropPosition('before');
-        else setDropPosition('after');
+      if (y > rect.height * 0.25 && y < rect.height * 0.75) setDropPosition('inside');
+      else if (y < rect.height / 2) setDropPosition('before');
+      else setDropPosition('after');
     } else {
-        if (y < rect.height / 2) setDropPosition('before');
-        else setDropPosition('after');
+      if (y < rect.height / 2) setDropPosition('before');
+      else setDropPosition('after');
     }
   };
 
@@ -90,13 +90,13 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
 
   const getLayerIcon = (layer: LogLayer) => {
     switch (layer.type) {
-      case LayerType.FILTER: return <svg className="w-3.5 h-3.5 text-blue-400" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M3 4h18l-7 9v6l-4 2V13L3 4z"/></svg>;
-      case LayerType.HIGHLIGHT: return <svg className="w-3.5 h-3.5 text-yellow-400" fill="currentColor" viewBox="0 0 24 24"><path d="M12 21a9 9 0 110-18 9 9 0 010 18z"/></svg>;
+      case LayerType.FILTER: return <svg className="w-3.5 h-3.5 text-blue-400" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M3 4h18l-7 9v6l-4 2V13L3 4z" /></svg>;
+      case LayerType.HIGHLIGHT: return <svg className="w-3.5 h-3.5 text-yellow-400" fill="currentColor" viewBox="0 0 24 24"><path d="M12 21a9 9 0 110-18 9 9 0 010 18z" /></svg>;
       case LayerType.RANGE: return <svg className="w-3.5 h-3.5 text-teal-400" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M7 8l-4 4 4 4M17 8l4 4-4 4M13 4l-2 16" /></svg>;
       case LayerType.TIME_RANGE: return <svg className="w-3.5 h-3.5 text-purple-400" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>;
       case LayerType.TRANSFORM: return <svg className="w-3.5 h-3.5 text-orange-400" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M4 4h16v16H4V4zm4 4h8v8H8V8z" /></svg>;
-      case LayerType.FOLDER: return <svg className="w-4 h-4 text-gray-400" fill="currentColor" viewBox="0 0 20 20"><path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z"/></svg>;
-      case LayerType.LEVEL: return <svg className="w-3.5 h-3.5 text-red-400" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>;
+      case LayerType.FOLDER: return <svg className="w-4 h-4 text-gray-400" fill="currentColor" viewBox="0 0 20 20"><path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" /></svg>;
+      case LayerType.LEVEL: return <svg className="w-3.5 h-3.5 text-red-400" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>;
       default: return <svg className="w-3.5 h-3.5 text-gray-500" fill="currentColor" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16" /></svg>;
     }
   };
@@ -114,16 +114,16 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
     const layerCount = stats[layer.id]?.count || 0;
 
     return (
-      <div 
+      <div
         key={layer.id}
         draggable={!isEditing && !isInputActive}
         onDragStart={(e) => handleDragStart(e, layer.id)}
         onDragEnd={handleDragEnd}
         onDragOver={(e) => handleDragOver(e, layer.id, layer.type)}
-        onDragLeave={(e) => { 
+        onDragLeave={(e) => {
           if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-            setDragOverId(null); 
-            setDropPosition(null); 
+            setDragOverId(null);
+            setDropPosition(null);
           }
         }}
         onDrop={(e) => handleDropLocal(e, layer.id)}
@@ -137,6 +137,12 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
             onSelect(layer.id);
           }
         }}
+        onClick={(e) => {
+          const target = e.target as HTMLElement;
+          if (target.tagName === 'INPUT' || target.tagName === 'BUTTON' || target.closest('button')) return;
+          // Toggle collapse
+          onUpdate(layer.id, { isCollapsed: !layer.isCollapsed });
+        }}
         onDoubleClick={() => setEditingId(layer.id)}
         className={`flex flex-col border-b border-[#111] relative group transition-all duration-200 overflow-hidden
           ${isSelected ? 'bg-[#37373d]' : 'bg-[#252526] hover:bg-[#2d2d30]'}
@@ -144,25 +150,25 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
           ${effectivelyDisabled ? 'opacity-40' : ''}`}
       >
         {isDragOver && dropPosition === 'before' && (
-          <div className="absolute top-0 left-0 right-0 h-[2px] bg-blue-500 z-50 pointer-events-none shadow-[0_0_8px_rgba(59,130,246,0.8)]">
-            <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-blue-500 border border-white shadow-sm" />
+          <div className="absolute top-0 left-0 right-0 h-[2px] bg-blue-500 z-50 pointer-events-none shadow-[0_0_8px_rgba(59,130,246,0.8)] flex items-center justify-center">
+            <span className="bg-blue-500 text-white text-[9px] px-1.5 rounded-b shadow-md font-sans -mt-0.5">插入到上方</span>
           </div>
         )}
         {isDragOver && dropPosition === 'after' && (
-          <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-blue-500 z-50 pointer-events-none shadow-[0_0_8px_rgba(59,130,246,0.8)]">
-            <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-blue-500 border border-white shadow-sm" />
+          <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-blue-500 z-50 pointer-events-none shadow-[0_0_8px_rgba(59,130,246,0.8)] flex items-center justify-center">
+            <span className="bg-blue-500 text-white text-[9px] px-1.5 rounded-t shadow-md font-sans -mb-0.5">插入到下方</span>
           </div>
         )}
 
         <div className={`flex items-center py-1 min-h-[32px] overflow-hidden`} style={{ paddingLeft: `${depth * 10 + 2}px` }}>
-          <div 
+          <div
             className={`w-6 h-6 flex items-center justify-center shrink-0 cursor-pointer hover:bg-white/5 rounded transition-transform ${layer.isCollapsed ? '-rotate-90' : ''}`}
             onClick={(e) => { e.stopPropagation(); onUpdate(layer.id, { isCollapsed: !layer.isCollapsed }); }}
           >
-            <svg className="w-2.5 h-2.5 text-gray-500" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd"/></svg>
+            <svg className="w-2.5 h-2.5 text-gray-500" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" /></svg>
           </div>
 
-          <div 
+          <div
             className={`w-7 h-7 flex items-center justify-center shrink-0 cursor-pointer rounded ${layer.enabled ? 'text-gray-400' : 'text-gray-700'}`}
             onClick={(e) => { e.stopPropagation(); onToggle(layer.id); }}
             title={layer.enabled ? '点击禁用图层' : '点击启用图层'}
@@ -171,15 +177,15 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
           </div>
 
           <div className="w-7 h-7 flex items-center justify-center shrink-0">
-             {getLayerIcon(layer)}
+            {getLayerIcon(layer)}
           </div>
 
           <div className="flex-1 min-w-0 flex items-center justify-between ml-1 pr-1">
             {isEditing ? (
-              <input 
+              <input
                 autoFocus className="bg-[#1e1e1e] border border-blue-500 text-[11px] px-1 rounded text-white w-full select-text h-5"
                 value={layer.name} onChange={(e) => onUpdate(layer.id, { name: e.target.value })}
-                onBlur={() => { setEditingId(null); setIsInputActive(false); }} 
+                onBlur={() => { setEditingId(null); setIsInputActive(false); }}
                 onFocus={() => setIsInputActive(true)}
                 onKeyDown={(e) => e.key === 'Enter' && setEditingId(null)}
                 onMouseDown={e => e.stopPropagation()}
@@ -195,38 +201,38 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
           </div>
 
           <div className="w-8 h-8 flex items-center justify-center shrink-0">
-              <button 
-                onClick={(e) => { e.stopPropagation(); onRemove(layer.id); }} 
-                className="w-full h-full flex items-center justify-center opacity-0 group-hover:opacity-100 hover:text-red-400 text-gray-600 transition-opacity"
-                title="删除图层"
-              >
-                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="3" d="M6 18L18 6M6 6l12 12"/></svg>
-              </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); onRemove(layer.id); }}
+              className="w-full h-full flex items-center justify-center opacity-0 group-hover:opacity-100 hover:text-red-400 text-gray-600 transition-opacity"
+              title="删除图层"
+            >
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="3" d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
           </div>
         </div>
 
         {isSelected && !isFolder && !layer.isCollapsed && ConfigComponent && (
-          <div 
+          <div
             className="px-3 pb-3 space-y-3 border-t border-black/10 pt-3 bg-black/5 shadow-inner"
             onMouseEnter={() => setIsInputActive(true)}
             onMouseLeave={() => setIsInputActive(false)}
             onMouseDown={e => e.stopPropagation()}
             style={{ paddingLeft: `${depth * 10 + 20}px` }}
           >
-             <ConfigComponent 
-                config={layer.config} 
-                onUpdate={(cfg: any) => onUpdate(layer.id, { config: { ...layer.config, ...cfg } })}
-                setDragDisabled={setIsInputActive}
-             />
+            <ConfigComponent
+              config={layer.config}
+              onUpdate={(cfg: any) => onUpdate(layer.id, { config: { ...layer.config, ...cfg } })}
+              setDragDisabled={setIsInputActive}
+            />
           </div>
         )}
 
         {!isFolder && stats[layer.id] && (
-            <div className="h-[2px] w-full flex space-x-[1px] relative overflow-hidden shrink-0">
-                {stats[layer.id].distribution.map((v, i) => (
-                    <div key={i} className="flex-1" style={{ backgroundColor: layerColor, opacity: Math.max(0.05, v * 0.8) }} />
-                ))}
-            </div>
+          <div className="h-[2px] w-full flex space-x-[1px] relative overflow-hidden shrink-0">
+            {stats[layer.id].distribution.map((v, i) => (
+              <div key={i} className="flex-1" style={{ backgroundColor: layerColor, opacity: Math.max(0.05, v * 0.8) }} />
+            ))}
+          </div>
         )}
       </div>
     );
@@ -237,8 +243,8 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
       .filter(l => l.groupId === parentId)
       .map(layer => (
         <React.Fragment key={layer.id}>
-            {renderLayerCard(layer, depth)}
-            {layer.type === LayerType.FOLDER && !layer.isCollapsed && renderRecursive(layer.id, depth + 1)}
+          {renderLayerCard(layer, depth)}
+          {layer.type === LayerType.FOLDER && !layer.isCollapsed && renderRecursive(layer.id, depth + 1)}
         </React.Fragment>
       ));
   };
@@ -251,8 +257,8 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
     const layerColor = layer.config.color || '#3b82f6';
 
     return (
-      <div 
-        style={{ position: 'fixed', left: tooltipPos.x, top: tooltipPos.y, zIndex: 1000, pointerEvents: 'none' }} 
+      <div
+        style={{ position: 'fixed', left: tooltipPos.x, top: tooltipPos.y, zIndex: 1000, pointerEvents: 'none' }}
         className="bg-[#2d2d30] border border-[#454545] shadow-2xl rounded p-3 w-48 text-[11px] text-[#cccccc] flex flex-col space-y-2 backdrop-blur-md bg-opacity-95"
       >
         <div className="flex items-center justify-between border-b border-white/5 pb-1">

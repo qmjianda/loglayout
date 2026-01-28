@@ -10,19 +10,25 @@ export const rangeProcessor: LogProcessor = (lines, layer, chunkSize) => {
     return { processedLines: lines, stats: { count: 0, distribution } };
   }
 
-  const processedLines = lines.filter((line, i) => {
-    // Handle string or LogLine type for index access
+  const start = from !== undefined ? from : 1;
+  const end = to !== undefined ? to : Infinity;
+
+  // 优化：使用 for 循环替代 filter
+  const processedLines: Array<LogLine | string> = [];
+  const total = lines.length;
+
+  for (let i = 0; i < total; i++) {
+    const line = lines[i];
     const lineIndex = typeof line === 'string' ? i : line.index;
     const lineNum = lineIndex + 1;
-    const start = from !== undefined ? from : 1;
-    const end = to !== undefined ? to : Infinity;
     const matches = lineNum >= start && lineNum <= end;
+
     if (matches) {
       matchCount++;
       distribution[Math.floor(i / chunkSize)]++;
+      processedLines.push(line);
     }
-    return matches;
-  });
+  }
 
   return { processedLines, stats: { count: matchCount, distribution } };
 };

@@ -1,13 +1,12 @@
 
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'react-resizable-panels';
 import { Sidebar } from './components/Sidebar';
 import { LogViewer } from './components/LogViewer';
-import { LayersPanel } from './components/LayersPanel';
 import { SearchPanel } from './components/SearchPanel';
 import { EditorFindWidget } from './components/EditorFindWidget';
 import { EditorGoToLineWidget } from './components/EditorGoToLineWidget';
-import { PresetPanel } from './components/PresetPanel';
-import { ExplorerPanel } from './components/ExplorerPanel';
+import { UnifiedPanel, FileInfo } from './components/UnifiedPanel';
 import { HelpPanel } from './components/HelpPanel';
 import { StatusBar } from './components/StatusBar';
 import { LogLayer, LayerType, LogLine, LayerPreset } from './types';
@@ -16,33 +15,79 @@ import { processLayer } from './processors/index';
 const DEFAULT_PRESET_ID = 'system-default-preset';
 const MAX_HISTORY = 100;
 
+// Panel Interface
+interface Pane {
+  id: string;
+  fileId: string | null;
+}
+
+// File Data Interface
+interface FileData {
+  id: string;
+  name: string;
+  size: number;
+  lines: string[];
+  lineCount: number;
+  layers: LogLayer[];
+  history?: {
+    past: LogLayer[][];
+    future: LogLayer[][];
+  };
+}
+
 const App: React.FC = () => {
-  const [activeView, setActiveView] = useState<'explorer' | 'search' | 'layers' | 'presets' | 'help'>('layers');
+  const [activeView, setActiveView] = useState<'main' | 'search' | 'help'>('main');
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saved'>('idle');
   const [scrollToIndex, setScrollToIndex] = useState<number | null>(null);
   const [highlightedIndex, setHighlightedIndex] = useState<number | null>(null);
   const [isFindVisible, setIsFindVisible] = useState(false);
   const [isGoToLineVisible, setIsGoToLineVisible] = useState(false);
-  
-  // Data State
-  const [rawLogs, setRawLogs] = useState<string[]>([]);
-  const [processedLogs, setProcessedLogs] = useState<Array<LogLine | string>>([]);
-  const [layerStats, setLayerStats] = useState<Record<string, { count: number; distribution: number[] }>>({});
-  const [rawStats, setRawStats] = useState<Record<string, number[]>>({});
 
-  // Layers state with history
-  const [layers, setLayersInternal] = useState<LogLayer[]>([]);
-  const [past, setPast] = useState<LogLayer[][]>([]);
-  const [future, setFuture] = useState<LogLayer[][]>([]);
+  // Multi-File Management
+  const [files, setFiles] = useState<FileData[]>([]);
+
+  // Split View Management
+  const [panes, setPanes] = useState<Pane[]>([{ id: 'pane-1', fileId: null }]);
+  const [activePaneId, setActivePaneId] = useState<string>('pane-1');
+
+  // Derived Active File (based on active pane)
+  const activePane = panes.find(p => p.id === activePaneId);
+  // Helper to set active file for current pane
+  const setActiveFileId = (fileId: string | null) => {
+    setPanes(prev => prev.map(p => p.id === activePaneId ? { ...p, fileId } : p));
+  };
+  const activeFileId = activePane?.fileId || null;
+  const activeFile = useMemo(() => files.find(f => f.id === activeFileId), [files, activeFileId]);
+
+  const rawLogs = activeFile?.lines || [];
+  const fileName = activeFile?.name || '';
+  const fileSize = activeFile?.size || 0;
+
+  // Layers state derived from active file
+  const layers = activeFile?.layers || [];
+  const past = activeFile?.history?.past || [];
+  const future = activeFile?.history?.future || [];
+
+  // Processing Cache (Per File)
+  const [processedCache, setProcessedCache] = useState<Record<string, {
+    logs: Array<LogLine | string>;
+    stats: Record<string, { count: number; distribution: number[] }>;
+    rawStats: Record<string, number[]>;
+  }>>({});
+
+  // Convenience accessors for Active File (to maintain compatibility with existing logic components)
+  const activeProcessed = activeFileId ? processedCache[activeFileId] : null;
+  const processedLogs = activeProcessed?.logs || [];
+  const layerStats = activeProcessed?.stats || {};
+  const rawStats = activeProcessed?.rawStats || {};
 
   const [presets, setPresets] = useState<LayerPreset[]>([]);
-  const [fileName, setFileName] = useState<string>('');
-  const [fileSize, setFileSize] = useState<number>(0);
+  const [sidebarWidth, setSidebarWidth] = useState(288); // Default 72 * 4 = 288px
   const [loadingProgress, setLoadingProgress] = useState<number>(0);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [isLayerProcessing, setIsLayerProcessing] = useState<boolean>(false);
-  
+
   // Search state
   const [searchQuery, setSearchQuery] = useState('');
   const [searchConfig, setSearchConfig] = useState({ regex: false, caseSensitive: false, wholeWord: false });
@@ -50,7 +95,20 @@ const App: React.FC = () => {
 
   const loadingAbortController = useRef<AbortController | null>(null);
   const processingTaskId = useRef<number>(0);
-  
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
+
+  // 文件信息列表（用于 UnifiedPanel）
+  const fileInfoList: FileInfo[] = useMemo(() =>
+    files.map(f => ({
+      id: f.id,
+      name: f.name,
+      size: f.size,
+      isActive: f.id === activeFileId,
+      lineCount: f.lineCount,
+      layers: f.layers // Pass layers for tree view
+    })), [files, activeFileId]);
+
   // Use a ref to access the latest layers inside effects without triggering them
   const layersRef = useRef<LogLayer[]>(layers);
   useEffect(() => {
@@ -60,49 +118,70 @@ const App: React.FC = () => {
   // Compute a functional hash of the layers that actually affect log processing
   const layersFunctionalHash = useMemo(() => {
     return JSON.stringify(layers.map(l => [
-      l.id, 
-      l.enabled, 
-      l.groupId, 
-      l.type, 
+      l.id,
+      l.enabled,
+      l.groupId,
+      l.type,
       l.config
     ]));
   }, [layers]);
 
-  // Helper to update layers with history
+  // Helper to update layers with history for the ACTIVE file
   const updateLayers = useCallback((updater: LogLayer[] | ((prev: LogLayer[]) => LogLayer[]), skipHistory = false) => {
-    setLayersInternal(prev => {
-      const next = typeof updater === 'function' ? updater(prev) : updater;
-      if (!skipHistory && JSON.stringify(prev) !== JSON.stringify(next)) {
-        setPast(p => [...p.slice(-(MAX_HISTORY - 1)), prev]);
-        setFuture([]);
+    if (!activeFileId) return;
+
+    setFiles(prevFiles => prevFiles.map(file => {
+      if (file.id !== activeFileId) return file;
+
+      const currentLayers = file.layers || [];
+      const nextLayers = typeof updater === 'function' ? updater(currentLayers) : updater;
+
+      // History logic
+      let newHistory = file.history || { past: [], future: [] };
+      if (!skipHistory && JSON.stringify(currentLayers) !== JSON.stringify(nextLayers)) {
+        newHistory = {
+          past: [...newHistory.past, currentLayers].slice(-(MAX_HISTORY - 1)),
+          future: []
+        };
       }
-      return next;
-    });
-  }, []);
+
+      return { ...file, layers: nextLayers, history: newHistory };
+    }));
+  }, [activeFileId]);
 
   const undo = useCallback(() => {
-    setPast(p => {
-      if (p.length === 0) return p;
-      const previous = p[p.length - 1];
-      setLayersInternal(current => {
-        setFuture(f => [current, ...f.slice(0, MAX_HISTORY - 1)]);
-        return previous;
-      });
-      return p.slice(0, -1);
-    });
-  }, []);
+    if (!activeFileId) return;
+    setFiles(prev => prev.map(file => {
+      if (file.id !== activeFileId || !file.history || file.history.past.length === 0) return file;
+
+      const previous = file.history.past[file.history.past.length - 1];
+      const newPast = file.history.past.slice(0, -1);
+      const newFuture = [file.layers, ...file.history.future].slice(0, MAX_HISTORY - 1);
+
+      return {
+        ...file,
+        layers: previous,
+        history: { past: newPast, future: newFuture }
+      };
+    }));
+  }, [activeFileId]);
 
   const redo = useCallback(() => {
-    setFuture(f => {
-      if (f.length === 0) return f;
-      const next = f[0];
-      setLayersInternal(current => {
-        setPast(p => [...p.slice(-(MAX_HISTORY - 1)), current]);
-        return next;
-      });
-      return f.slice(1);
-    });
-  }, []);
+    if (!activeFileId) return;
+    setFiles(prev => prev.map(file => {
+      if (file.id !== activeFileId || !file.history || file.history.future.length === 0) return file;
+
+      const next = file.history.future[0];
+      const newFuture = file.history.future.slice(1);
+      const newPast = [...file.history.past, file.layers].slice(-(MAX_HISTORY - 1));
+
+      return {
+        ...file,
+        layers: next,
+        history: { past: newPast, future: newFuture }
+      };
+    }));
+  }, [activeFileId]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -147,7 +226,7 @@ const App: React.FC = () => {
   useEffect(() => {
     const saved = localStorage.getItem('loglayer_presets');
     let initialPresets: LayerPreset[] = [];
-    
+
     if (saved) {
       try {
         initialPresets = JSON.parse(saved);
@@ -157,7 +236,7 @@ const App: React.FC = () => {
     }
 
     let defaultPreset = initialPresets.find(p => p.id === DEFAULT_PRESET_ID || p.name === '默认' || p.name === 'Default');
-    
+
     if (!defaultPreset) {
       defaultPreset = {
         id: DEFAULT_PRESET_ID,
@@ -173,35 +252,24 @@ const App: React.FC = () => {
     }
 
     setPresets(initialPresets);
-    updateLayers(JSON.parse(JSON.stringify(defaultPreset.layers)), true);
+    // updateLayers call removed as we rely on per-file initialization
     localStorage.setItem('loglayer_presets', JSON.stringify(initialPresets));
-  }, [updateLayers]);
+  }, []); // Remove updateLayers dependency
 
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    event.target.value = '';
-
-    if (loadingAbortController.current) loadingAbortController.current.abort();
-    loadingAbortController.current = new AbortController();
-    
-    setFileName(file.name);
-    setFileSize(file.size);
-    setRawLogs([]);
-    setLoadingProgress(0);
-    setIsProcessing(true);
-
-    const stream = file.stream();
-    const reader = stream.getReader();
-    const decoder = new TextDecoder();
-    let partialLine = '';
-    let loadedBytes = 0;
-    
-    const allLines: string[] = [];
-    const updateFrequency = 100000;
+  // 处理单个文件
+  const processFile = async (file: File): Promise<FileData> => {
+    console.log('[processFile] Starting to process file:', file.name, 'Size:', file.size);
 
     try {
+      const stream = file.stream();
+      const reader = stream.getReader();
+      const decoder = new TextDecoder();
+      let partialLine = '';
+      let loadedBytes = 0;
+
+      const allLines: string[] = [];
+      const updateFrequency = 100000;
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -223,10 +291,77 @@ const App: React.FC = () => {
       if (partialLine) {
         allLines.push(partialLine);
       }
-      
-      setRawLogs(allLines);
+
+      console.log('[processFile] Finished processing file:', file.name, 'Lines:', allLines.length);
+
+      return {
+        id: `file-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        name: file.name,
+        size: file.size,
+        lines: allLines,
+        lineCount: allLines.length,
+        layers: [], // 将在调用处被覆盖或初始化
+        history: { past: [], future: [] }
+      };
+    } catch (error) {
+      console.error('[processFile] Error processing file:', file.name, error);
+      throw error;
+    }
+  };
+
+  // 处理文件上传
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    console.log('[handleFileUpload] Event triggered');
+    const rawFiles = event.target.files;
+    console.log('[handleFileUpload] Files:', rawFiles?.length || 0);
+
+    if (!rawFiles || rawFiles.length === 0) {
+      console.log('[handleFileUpload] No files selected, returning');
+      return;
+    }
+
+    // 关键修正：将 FileList 转换为数组，保存文件引用
+    const fileList = Array.from(rawFiles) as File[];
+
+    event.target.value = '';
+
+    if (loadingAbortController.current) loadingAbortController.current.abort();
+    loadingAbortController.current = new AbortController();
+
+    setLoadingProgress(0);
+    setIsProcessing(true);
+    console.log('[handleFileUpload] Starting to process', fileList.length, 'files');
+
+    try {
+      const newFiles: FileData[] = [];
+
+      for (let i = 0; i < fileList.length; i++) {
+        const file = fileList[i];
+        console.log('[handleFileUpload] Processing file', i + 1, ':', file.name);
+        const fileData = await processFile(file);
+
+        // Initialize layers from default preset
+        const defaultPreset = presets.find(p => p.id === DEFAULT_PRESET_ID);
+        if (defaultPreset) {
+          fileData.layers = JSON.parse(JSON.stringify(defaultPreset.layers));
+        }
+
+        newFiles.push(fileData);
+      }
+
+      console.log('[handleFileUpload] All files processed. Setting state...');
+      setFiles(prev => [...prev, ...newFiles]);
+
+      // 激活新加载的第一个文件
+      if (newFiles.length > 0) {
+        console.log('[handleFileUpload] Activating file:', newFiles[0].id);
+        setActiveFileId(newFiles[0].id);
+      }
+
       setLoadingProgress(100);
+      console.log('[handleFileUpload] Done!');
     } catch (err) {
+      console.error('[handleFileUpload] Error:', err);
       if ((err as Error).name !== 'AbortError') console.error("Error reading file:", err);
     } finally {
       setIsProcessing(false);
@@ -234,21 +369,89 @@ const App: React.FC = () => {
     }
   };
 
-  const runAsyncProcessing = useCallback(async (currentRawLogs: string[], currentLayers: LogLayer[], currentSearchQuery: string, currentSearchConfig: any) => {
+  // 处理文件夹上传
+  const handleFolderUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const fileList = event.target.files;
+    if (!fileList || fileList.length === 0) return;
+
+    event.target.value = '';
+
+    // 过滤日志文件
+    const allFiles = Array.from(fileList) as File[];
+    const logFiles = allFiles.filter(file =>
+      file.name.endsWith('.log') ||
+      file.name.endsWith('.txt') ||
+      file.name.endsWith('.json') ||
+      !file.name.includes('.')
+    );
+
+    if (logFiles.length === 0) {
+      alert('未找到日志文件（.log, .txt, .json）');
+      return;
+    }
+
+    if (loadingAbortController.current) loadingAbortController.current.abort();
+    loadingAbortController.current = new AbortController();
+
+    setLoadingProgress(0);
+    setIsProcessing(true);
+
+    try {
+      const newFiles: FileData[] = [];
+
+      for (let i = 0; i < logFiles.length; i++) {
+        const file = logFiles[i];
+        setLoadingProgress(Math.round((i / logFiles.length) * 100));
+        const fileData = await processFile(file);
+        newFiles.push(fileData);
+      }
+
+      setFiles(prev => [...prev, ...newFiles]);
+
+      if (!activeFileId && newFiles.length > 0) {
+        setActiveFileId(newFiles[0].id);
+      }
+
+      setLoadingProgress(100);
+    } catch (err) {
+      if ((err as Error).name !== 'AbortError') console.error("Error reading files:", err);
+    } finally {
+      setIsProcessing(false);
+      loadingAbortController.current = null;
+    }
+  };
+
+  // 激活文件
+  const handleFileActivate = (fileId: string) => {
+    setActiveFileId(fileId);
+  };
+
+  // 移除文件
+  const handleFileRemove = (fileId: string) => {
+    setFiles(prev => prev.filter(f => f.id !== fileId));
+    if (activeFileId === fileId) {
+      const remaining = files.filter(f => f.id !== fileId);
+      setActiveFileId(remaining.length > 0 ? remaining[0].id : null);
+    }
+  };
+
+  const runAsyncProcessing = useCallback(async (targetFileId: string, currentRawLogs: string[], currentLayers: LogLayer[], currentSearchQuery: string, currentSearchConfig: any) => {
     const taskId = ++processingTaskId.current;
     setIsLayerProcessing(true);
 
     const stats: Record<string, { count: number; distribution: number[] }> = {};
     const rawCounts: Record<string, number[]> = {};
-    
+
     currentLayers.forEach(l => {
       stats[l.id] = { count: 0, distribution: new Array(20).fill(0) };
       rawCounts[l.id] = new Array(20).fill(0);
     });
 
     if (!currentRawLogs.length) {
-      setProcessedLogs([]);
-      setLayerStats(stats);
+      setProcessedCache(prev => ({
+        ...prev,
+        [targetFileId]: { logs: [], stats: stats, rawStats: {} }
+      }));
       setIsLayerProcessing(false);
       return;
     }
@@ -261,11 +464,11 @@ const App: React.FC = () => {
         name: '全局搜索',
         type: LayerType.HIGHLIGHT,
         enabled: true,
-        config: { 
-          query: currentSearchQuery, 
+        config: {
+          query: currentSearchQuery,
           ...currentSearchConfig,
-          color: '#facc15', 
-          opacity: 100 
+          color: '#facc15',
+          opacity: 100
         }
       });
       stats[searchLayerId] = { count: 0, distribution: new Array(20).fill(0) };
@@ -281,8 +484,10 @@ const App: React.FC = () => {
     });
 
     if (activeLayers.length === 0) {
-      setProcessedLogs(currentRawLogs);
-      setLayerStats(stats);
+      setProcessedCache(prev => ({
+        ...prev,
+        [targetFileId]: { logs: currentRawLogs, stats: stats, rawStats: rawCounts }
+      }));
       setIsLayerProcessing(false);
       return;
     }
@@ -293,24 +498,29 @@ const App: React.FC = () => {
     for (const layer of activeLayers) {
       if (taskId !== processingTaskId.current) return;
       const startTime = performance.now();
-      
+
       const needsObject = layer.type === LayerType.HIGHLIGHT || layer.type === LayerType.TRANSFORM;
 
       if (needsObject && !isObjectified) {
         const source = activeLines ? activeLines : currentRawLogs;
         const totalToProcess = source.length;
         const newLines: LogLine[] = new Array(totalToProcess);
-        const step = 200000;
-        for (let i = 0; i < totalToProcess; i += step) {
+
+        const batchSize = 500000;
+        for (let i = 0; i < totalToProcess; i += batchSize) {
           if (taskId !== processingTaskId.current) return;
-          const end = Math.min(i + step, totalToProcess);
+          const end = Math.min(i + batchSize, totalToProcess);
+
           for (let j = i; j < end; j++) {
             const line = source[j];
-            newLines[j] = typeof line === 'string' 
-              ? { index: j, content: line } 
+            newLines[j] = typeof line === 'string'
+              ? { index: j, content: line }
               : line;
           }
-          if (performance.now() - startTime > 30) await new Promise(r => setTimeout(r, 0));
+
+          if (end < totalToProcess) {
+            await new Promise(r => setTimeout(r, 0));
+          }
         }
         activeLines = newLines;
         isObjectified = true;
@@ -328,23 +538,25 @@ const App: React.FC = () => {
     let finalLines: Array<LogLine | string> = activeLines || currentRawLogs;
 
     if (taskId === processingTaskId.current) {
-      setProcessedLogs(finalLines);
-      setLayerStats(stats);
-      setRawStats(rawCounts);
+      setProcessedCache(prev => ({
+        ...prev,
+        [targetFileId]: { logs: finalLines, stats: stats, rawStats: rawCounts }
+      }));
       setIsLayerProcessing(false);
       setCurrentMatchIndex(-1);
     }
   }, []);
 
   useEffect(() => {
+    if (!activeFileId) return;
     const debounceTime = rawLogs.length > 5000000 ? 1500 : (rawLogs.length > 1000000 ? 800 : 250);
     const timer = setTimeout(() => {
-      runAsyncProcessing(rawLogs, layersRef.current, searchQuery, searchConfig);
+      runAsyncProcessing(activeFileId, rawLogs, layersRef.current, searchQuery, searchConfig);
     }, debounceTime);
     return () => clearTimeout(timer);
-  }, [rawLogs, layersFunctionalHash, searchQuery, searchConfig, runAsyncProcessing]);
+  }, [rawLogs, layersFunctionalHash, searchQuery, searchConfig, runAsyncProcessing, activeFileId]);
 
-  const addLayer = (type: LayerType) => {
+  const addLayer = (type: LayerType, initialConfig: any = {}) => {
     const newId = Math.random().toString(36).substr(2, 9);
     let parentId: string | undefined = undefined;
     if (selectedLayerId) {
@@ -353,21 +565,24 @@ const App: React.FC = () => {
       else if (selected?.groupId) parentId = selected.groupId;
     }
 
+    const defaultConfig = type === LayerType.HIGHLIGHT ? { color: '#3b82f6', opacity: 100, query: '' } :
+      type === LayerType.TIME_RANGE ? { startTime: '', endTime: '', timeFormat: '(\\d{4}-\\d{2}-\\d{2}\\s\\d{2}:\\d{2}:\\d{2})' } :
+        type === LayerType.RANGE ? { from: 1, to: 1000 } :
+          type === LayerType.TRANSFORM ? { query: '', replaceWith: '', regex: true } :
+            type === LayerType.LEVEL ? { levels: ['ERROR', 'WARN'] } :
+              type === LayerType.FILTER ? { query: '', regex: false } : {};
+
     const newLayer: LogLayer = {
       id: newId,
-      name: type === LayerType.FOLDER ? '新建文件夹' : 
-            type === LayerType.TIME_RANGE ? '时间过滤' : 
-            type === LayerType.RANGE ? '行号范围' :
+      name: type === LayerType.FOLDER ? '新建文件夹' :
+        type === LayerType.TIME_RANGE ? '时间过滤' :
+          type === LayerType.RANGE ? '行号范围' :
             type === LayerType.TRANSFORM ? '内容转换' :
-            type === LayerType.LEVEL ? '日志等级' : 
-            type === LayerType.FILTER ? '内容过滤' :
-            type === LayerType.HIGHLIGHT ? '高亮图层' : '新建图层',
+              type === LayerType.LEVEL ? '日志等级' :
+                type === LayerType.FILTER ? '内容过滤' :
+                  type === LayerType.HIGHLIGHT ? '高亮图层' : '新建图层',
       type, enabled: true, groupId: parentId, isCollapsed: false,
-      config: type === LayerType.HIGHLIGHT ? { color: '#3b82f6', opacity: 100, query: '' } : 
-              type === LayerType.TIME_RANGE ? { startTime: '', endTime: '', timeFormat: '(\\d{4}-\\d{2}-\\d{2}\\s\\d{2}:\\d{2}:\\d{2})' } : 
-              type === LayerType.RANGE ? { from: 1, to: 1000 } :
-              type === LayerType.TRANSFORM ? { query: '', replaceWith: '', regex: true } : 
-              type === LayerType.LEVEL ? { levels: ['ERROR', 'WARN'] } : {}
+      config: { ...defaultConfig, ...initialConfig }
     };
     updateLayers(prev => [...prev, newLayer]);
     setSelectedLayerId(newId);
@@ -399,7 +614,7 @@ const App: React.FC = () => {
   const handleJumpToLine = (index: number) => {
     const total = processedLogs.length;
     if (total === 0) return;
-    
+
     const boundedIndex = Math.max(0, Math.min(index, total - 1));
     setScrollToIndex(boundedIndex);
     setHighlightedIndex(boundedIndex);
@@ -460,7 +675,7 @@ const App: React.FC = () => {
       setCurrentMatchIndex(nextIdx);
       handleJumpToLine(nextIdx);
     }
-  }, [searchQuery, processedLogs, searchConfig, currentMatchIndex, handleJumpToLine]);
+  }, [searchQuery, processedLogs, searchConfig, currentMatchIndex]);
 
   const handleSavePreset = () => {
     const presetName = prompt("输入预设名称 (输入 '默认' 将更新系统设置):");
@@ -469,18 +684,18 @@ const App: React.FC = () => {
     setPresets(prev => {
       let next = [...prev];
       const existingIdx = next.findIndex(p => p.name.toLowerCase() === presetName.toLowerCase());
-      const newPreset = { 
-        id: existingIdx >= 0 ? next[existingIdx].id : Date.now().toString(), 
-        name: existingIdx >= 0 ? next[existingIdx].name : presetName, 
-        layers: JSON.parse(JSON.stringify(layers)) 
+      const newPreset = {
+        id: existingIdx >= 0 ? next[existingIdx].id : Date.now().toString(),
+        name: existingIdx >= 0 ? next[existingIdx].name : presetName,
+        layers: JSON.parse(JSON.stringify(layers))
       };
       if (existingIdx >= 0) next[existingIdx] = newPreset;
       else next = [newPreset, ...next];
       localStorage.setItem('loglayer_presets', JSON.stringify(next));
       return next;
     });
-    setSaveStatus('saved'); 
-    setTimeout(()=>setSaveStatus('idle'), 1000); 
+    setSaveStatus('saved');
+    setTimeout(() => setSaveStatus('idle'), 1000);
   };
 
   const activeStats = useMemo(() => ({ ...layerStats }), [layerStats]);
@@ -505,87 +720,120 @@ const App: React.FC = () => {
 
   return (
     <div className="flex flex-col h-screen select-none overflow-hidden text-sm bg-[#1e1e1e] text-[#cccccc]">
+      {/* 隐藏的文件输入 */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={handleFileUpload}
+        accept=".log,.txt,.json,*"
+      />
+      <input
+        ref={folderInputRef}
+        type="file"
+        className="hidden"
+        onChange={handleFolderUpload}
+        // @ts-ignore - webkitdirectory is a non-standard attribute
+        webkitdirectory=""
+        directory=""
+        multiple
+      />
+
       <div className="h-9 bg-[#2d2d2d] flex items-center px-4 border-b border-[#111] shrink-0 justify-between">
         <div className="flex items-center space-x-4">
           <span className="text-blue-400 font-black tracking-tighter flex items-center cursor-default">
-            <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5-10-5zM2 17l10 5 10-5-10-5-10 5zM2 12l10 5 10-5-10-5-10 5z"/></svg>
+            <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5-10-5zM2 17l10 5 10-5-10-5-10 5zM2 12l10 5 10-5-10-5-10 5z" /></svg>
             LOGLAYER PRO
           </span>
-          <label className="cursor-pointer text-[10px] font-bold text-gray-400 hover:text-white bg-[#3c3c3c] px-2 py-1 rounded transition-all hover:bg-[#444]">
-            {isProcessing ? `加载中 ${loadingProgress}%` : '打开日志'}
-            <input type="file" className="hidden" onChange={handleFileUpload} disabled={isProcessing} />
-          </label>
         </div>
-        <div className="text-[10px] text-gray-500 font-mono truncate max-w-xs">{fileName || (isProcessing ? '正在解析文件...' : '就绪')}</div>
+        <div className="text-[10px] text-gray-500 font-mono truncate max-w-xs">
+          {fileName || (isProcessing ? '正在解析文件...' : '就绪')}
+          {files.length > 1 && ` (+${files.length - 1})`}
+        </div>
       </div>
 
       {(isProcessing || isLayerProcessing) && (
         <div className="h-0.5 w-full bg-[#111] overflow-hidden relative">
-          <div className={`h-full bg-blue-500 transition-all duration-300 ${isLayerProcessing ? 'animate-pulse' : ''}`} 
-               style={{ width: isLayerProcessing ? '100%' : `${loadingProgress}%` }} />
+          <div className={`h-full bg-blue-500 transition-all duration-300 ${isLayerProcessing ? 'animate-pulse' : ''}`}
+            style={{ width: isLayerProcessing ? '100%' : `${loadingProgress}%` }} />
         </div>
       )}
 
       <div className="flex-1 flex overflow-hidden">
         <Sidebar activeView={activeView} onSetActiveView={setActiveView} />
-        <div className="w-72 bg-[#252526] border-r border-[#111] flex flex-col shrink-0 shadow-lg">
-          {activeView === 'explorer' && <ExplorerPanel fileName={fileName} fileSize={fileSize} onFileSelect={() => document.querySelector<HTMLInputElement>('input[type="file"]')?.click()} />}
-          {activeView === 'layers' && (
-            <div className="flex-1 flex flex-col overflow-hidden">
-              <div className="p-3 border-b border-[#111] bg-[#2d2d2d] shrink-0">
-                <div className="flex items-center justify-between mb-2">
-                    <h2 className="text-[10px] uppercase font-black opacity-40 tracking-wider">图层面板</h2>
-                    <div className="flex items-center space-x-0.5 border-l border-white/10 pl-2">
-                        <button onClick={undo} disabled={past.length === 0} className={`p-1 rounded ${past.length > 0 ? 'text-gray-400 hover:bg-[#444] hover:text-white' : 'text-gray-700 cursor-not-allowed'}`} title="撤销 (Ctrl+Z)">
-                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/></svg>
-                        </button>
-                        <button onClick={redo} disabled={future.length === 0} className={`p-1 rounded ${future.length > 0 ? 'text-gray-400 hover:bg-[#444] hover:text-white' : 'text-gray-700 cursor-not-allowed'}`} title="重做 (Ctrl+Y)">
-                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M21 10H11a8 8 0 00-8 8v2M21 10l-6 6m6-6l-6-6"/></svg>
-                        </button>
-                    </div>
-                </div>
-                <div className="flex flex-wrap gap-1 items-center">
-                  <button onClick={() => addLayer(LayerType.FOLDER)} className="w-7 h-7 flex items-center justify-center hover:bg-[#444] rounded text-gray-400" title="添加文件夹"><svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg></button>
-                  <button onClick={() => addLayer(LayerType.FILTER)} className="w-7 h-7 flex items-center justify-center hover:bg-[#444] rounded text-blue-400" title="添加内容过滤"><svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M3 4h18l-7 9v6l-4 2V13L3 4z"/></svg></button>
-                  <button onClick={() => addLayer(LayerType.HIGHLIGHT)} className="w-7 h-7 flex items-center justify-center hover:bg-[#444] rounded text-yellow-400" title="添加高亮图层"><svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 21a9 9 0 110-18 9 9 0 010 18z"/></svg></button>
-                  <button onClick={() => addLayer(LayerType.TIME_RANGE)} className="w-7 h-7 flex items-center justify-center hover:bg-[#444] rounded text-purple-400" title="添加时间过滤器"><svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg></button>
-                  <button onClick={() => addLayer(LayerType.LEVEL)} className="w-7 h-7 flex items-center justify-center hover:bg-[#444] rounded text-red-400" title="添加等级过滤器"><svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg></button>
-                  <button onClick={() => addLayer(LayerType.RANGE)} className="w-7 h-7 flex items-center justify-center hover:bg-[#444] rounded text-teal-400" title="添加行号范围过滤器"><svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path d="M7 8l-4 4 4 4M17 8l4 4-4 4M13 4l-2 16" /></svg></button>
-                  <button onClick={() => addLayer(LayerType.TRANSFORM)} className="w-7 h-7 flex items-center justify-center hover:bg-[#444] rounded text-orange-400" title="添加转换图层"><svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path d="M4 4h16v16H4V4zm4 4h8v8H8V8z"/></svg></button>
-                </div>
-              </div>
-              <div className="flex-1 overflow-y-auto custom-scrollbar">
-                <LayersPanel 
-                  layers={layers} stats={layerStats} rawCounts={rawStats}
-                  selectedId={selectedLayerId} onSelect={setSelectedLayerId} onDrop={handleDrop}
-                  onJumpToLine={handleJumpToLine}
-                  onRemove={(id) => updateLayers(prev => prev.filter(l => l.id !== id && l.groupId !== id))} 
-                  onToggle={(id) => updateLayers(prev => prev.map(l => l.id === id ? { ...l, enabled: !l.enabled } : l))} 
-                  onUpdate={(id, update) => updateLayers(prev => prev.map(l => l.id === id ? { ...l, ...update } : l))}
-                />
-              </div>
-              <div className="p-2 border-t border-[#111] bg-[#2d2d2d] shrink-0">
-                <button onClick={handleSavePreset} className={`w-full py-1.5 rounded text-[10px] font-bold uppercase tracking-wider ${saveStatus === 'saved' ? 'bg-green-600' : 'bg-blue-600 hover:bg-blue-500'} text-white shadow-lg transition-all`}>
-                  {saveStatus === 'saved' ? '已更新' : '保存当前图层组'}
-                </button>
-              </div>
-            </div>
+        <div
+          className="bg-[#252526] border-r border-[#111] flex flex-col shrink-0 shadow-lg relative group/sidebar"
+          style={{ width: sidebarWidth }}
+        >
+          {/* Sidebar Resizer Handle */}
+          <div
+            className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-blue-500/50 z-50 transition-colors opacity-0 group-hover/sidebar:opacity-100"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              const startX = e.clientX;
+              const startWidth = sidebarWidth;
+
+              const handleMouseMove = (moveEvent: MouseEvent) => {
+                const newWidth = Math.max(200, Math.min(600, startWidth + (moveEvent.clientX - startX)));
+                setSidebarWidth(newWidth);
+              };
+
+              const handleMouseUp = () => {
+                document.removeEventListener('mousemove', handleMouseMove);
+                document.removeEventListener('mouseup', handleMouseUp);
+                document.body.style.cursor = '';
+              };
+
+              document.addEventListener('mousemove', handleMouseMove);
+              document.addEventListener('mouseup', handleMouseUp);
+              document.body.style.cursor = 'col-resize';
+            }}
+          />
+          {activeView === 'main' && (
+            <UnifiedPanel
+              files={fileInfoList}
+              activeFileId={activeFileId}
+              onFileSelect={() => fileInputRef.current?.click()}
+              onFolderSelect={() => folderInputRef.current?.click()}
+              onFileActivate={handleFileActivate}
+              onFileRemove={handleFileRemove}
+              layers={layers}
+              layerStats={layerStats}
+              rawCounts={rawStats}
+              selectedLayerId={selectedLayerId}
+              onSelectLayer={setSelectedLayerId}
+              onLayerDrop={handleDrop}
+              onLayerRemove={(id) => updateLayers(prev => prev.filter(l => l.id !== id && l.groupId !== id))}
+              onLayerToggle={(id) => updateLayers(prev => prev.map(l => l.id === id ? { ...l, enabled: !l.enabled } : l))}
+              onLayerUpdate={(id, update) => updateLayers(prev => prev.map(l => l.id === id ? { ...l, ...update } : l))}
+              onAddLayer={addLayer}
+              onJumpToLine={handleJumpToLine}
+              presets={presets}
+              onPresetApply={(p) => updateLayers(JSON.parse(JSON.stringify(p.layers)))}
+              onPresetDelete={(id) => {
+                const next = presets.filter(p => p.id !== id);
+                setPresets(next);
+                localStorage.setItem('loglayer_presets', JSON.stringify(next));
+              }}
+              onPresetSave={handleSavePreset}
+              saveStatus={saveStatus}
+              canUndo={past.length > 0}
+              canRedo={future.length > 0}
+              onUndo={undo}
+              onRedo={redo}
+            />
           )}
           {activeView === 'search' && (
-            <SearchPanel 
-              onSearch={setSearchQuery} 
-              config={searchConfig} 
+            <SearchPanel
+              onSearch={setSearchQuery}
+              config={searchConfig}
               setConfig={setSearchConfig}
               matchCount={searchMatchCount}
               onNavigate={findNextSearchMatch}
               currentIndex={currentMatchNumber}
             />
           )}
-          {activeView === 'presets' && <PresetPanel presets={presets} onApply={(p)=>updateLayers(JSON.parse(JSON.stringify(p.layers)))} onDelete={(id) => {
-            const next = presets.filter(p => p.id !== id);
-            setPresets(next);
-            localStorage.setItem('loglayer_presets', JSON.stringify(next));
-          }} />}
         </div>
 
         <div className="flex-1 flex flex-col min-w-0 bg-[#1e1e1e] relative select-text">
@@ -593,21 +841,22 @@ const App: React.FC = () => {
             <HelpPanel />
           ) : (
             <>
+              {/* Overlays */}
               {isFindVisible && (
-                <EditorFindWidget 
+                <EditorFindWidget
                   query={searchQuery}
                   onQueryChange={setSearchQuery}
                   config={searchConfig}
                   onConfigChange={setSearchConfig}
-                  matchCount={searchMatchCount}
-                  currentMatch={currentMatchNumber}
-                  onNavigate={findNextSearchMatch}
+                  matchCount={0}
+                  currentMatch={currentMatchIndex}
+                  onNavigate={() => { }}
                   onClose={() => setIsFindVisible(false)}
                 />
               )}
 
               {isGoToLineVisible && (
-                <EditorGoToLineWidget 
+                <EditorGoToLineWidget
                   totalLines={processedLogs.length}
                   onGo={(lineNum) => {
                     handleJumpToLine(lineNum - 1);
@@ -617,35 +866,122 @@ const App: React.FC = () => {
                 />
               )}
 
-              <LogViewer 
-                lines={processedLogs} 
-                searchQuery={searchQuery} 
-                searchConfig={searchConfig} 
-                scrollToIndex={scrollToIndex}
-                highlightedIndex={highlightedIndex}
-                onLineClick={handleLogViewerInteraction}
-              />
-              
-              <div className="absolute right-0 top-0 bottom-0 w-3 bg-black/20 pointer-events-none border-l border-white/5 select-none">
-                {Object.keys(activeStats).map(layerId => {
-                   const stats = activeStats[layerId];
-                   const layer = layers.find(l => l.id === layerId) || (layerId === 'global-search-volatile' ? { type: LayerType.HIGHLIGHT, config: { color: '#facc15' }, enabled: true } : null);
-                   if (!layer || !layer.enabled || !stats) return null;
-                   
-                   return stats.distribution.map((d, i) => d > 0 && (
-                     <div key={`${layerId}-${i}`} className="absolute w-full" style={{ top: `${(i/20)*100}%`, height: '5%', backgroundColor: layer.config.color || '#3b82f6', opacity: d * 0.6 }} />
-                   ));
+              {/* Split View Editor Area */}
+              <PanelGroup direction="horizontal" autoSaveId="loglayer-layout">
+                {panes.map((pane, index) => {
+                  const paneFileId = pane.fileId;
+                  const processedData = paneFileId ? processedCache[paneFileId] : null;
+                  const paneLines = processedData?.logs || [];
+                  // TODO: Per-pane stats for scrollbar heatmap
+                  const paneStats = processedData?.stats || {};
+
+                  return (
+                    <React.Fragment key={pane.id}>
+                      {index > 0 && <PanelResizeHandle className="w-1 bg-[#111] hover:bg-blue-500 transition-colors cursor-col-resize z-50" />}
+                      <Panel className="flex flex-col min-w-0 bg-[#1e1e1e] relative">
+                        <div
+                          className={`flex-1 flex flex-col min-h-0 relative ${activePaneId === pane.id ? 'ring-1 ring-blue-500/30' : ''}`}
+                          onClick={() => setActivePaneId(pane.id)}
+                          onDragOver={(e) => {
+                            e.preventDefault();
+                            e.dataTransfer.dropEffect = 'copy';
+                          }}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            const data = e.dataTransfer.getData('application/json');
+                            if (!data) return;
+                            try {
+                              const { type, id } = JSON.parse(data);
+                              if (type === 'FILE') {
+                                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                                const x = e.clientX - rect.left;
+                                const width = rect.width;
+
+                                if (x > width * 0.75) {
+                                  const newPaneId = `pane-${Date.now()}`;
+                                  setPanes(prev => {
+                                    const idx = prev.findIndex(p => p.id === pane.id);
+                                    const newPanes = [...prev];
+                                    newPanes.splice(idx + 1, 0, { id: newPaneId, fileId: id });
+                                    return newPanes;
+                                  });
+                                  setActivePaneId(newPaneId);
+                                } else {
+                                  setPanes(prev => prev.map(p => p.id === pane.id ? { ...p, fileId: id } : p));
+                                  setActivePaneId(pane.id);
+                                }
+                              }
+                            } catch (err) {
+                              console.error("Drop error", err);
+                            }
+                          }}
+                        >
+                          {/* Pane Header */}
+                          <div className="h-8 bg-[#252526] flex items-center px-4 text-xs text-gray-400 border-b border-[#111] shrink-0 select-none">
+                            {paneFileId ? (files.find(f => f.id === paneFileId)?.name || 'Unknown File') : 'Empty Pane'}
+                            <div className="ml-auto flex gap-2">
+                              {panes.length > 1 && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const newPanes = panes.filter(p => p.id !== pane.id);
+                                    setPanes(newPanes);
+                                    if (activePaneId === pane.id) setActivePaneId(newPanes[0].id);
+                                  }}
+                                  className="hover:text-white"
+                                >
+                                  ✕
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          {paneFileId ? (
+                            <div className="flex-1 relative min-h-0">
+                              <LogViewer
+                                lines={paneLines}
+                                searchQuery={searchQuery}
+                                searchConfig={searchConfig}
+                                scrollToIndex={activePaneId === pane.id ? scrollToIndex : null}
+                                highlightedIndex={activePaneId === pane.id ? highlightedIndex : null}
+                                onLineClick={(idx) => {
+                                  if (activePaneId !== pane.id) setActivePaneId(pane.id);
+                                }}
+                                onAddLayer={(type, config) => addLayer(type, config)}
+                              />
+                              {/* Scrollbar Heatmap (Per Pane) */}
+                              <div className="absolute right-0 top-0 bottom-0 w-3 bg-black/20 pointer-events-none border-l border-white/5 select-none z-10">
+                                {Object.keys(paneStats).map(layerId => {
+                                  const stats = paneStats[layerId];
+                                  const layer = layers.find(l => l.id === layerId) || (layerId === 'global-search-volatile' ? { type: LayerType.HIGHLIGHT, config: { color: '#facc15' }, enabled: true } : null);
+                                  if (!layer || !layer.enabled || !stats) return null;
+
+                                  return stats.distribution.map((d, i) => d > 0 && (
+                                    <div key={`${layerId}-${i}`} className="absolute w-full" style={{ top: `${(i / 20) * 100}%`, height: '5%', backgroundColor: layer.config.color || '#3b82f6', opacity: d * 0.6 }} />
+                                  ));
+                                })}
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex-1 flex flex-col items-center justify-center text-gray-600">
+                              <p>Drag a file here to open</p>
+                            </div>
+                          )}
+                        </div>
+                      </Panel>
+                    </React.Fragment>
+                  );
                 })}
-              </div>
+              </PanelGroup>
             </>
           )}
         </div>
       </div>
-      <StatusBar 
-        lines={processedLogs.length} 
-        totalLines={rawLogs.length} 
-        size={fileSize} 
-        isProcessing={isProcessing || isLayerProcessing} 
+      <StatusBar
+        lines={processedLogs.length}
+        totalLines={rawLogs.length}
+        size={fileSize}
+        isProcessing={isProcessing || isLayerProcessing}
         isLayerProcessing={isLayerProcessing}
       />
     </div>

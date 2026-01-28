@@ -35,19 +35,25 @@ export const timeRangeProcessor: LogProcessor = (lines, layer, chunkSize) => {
     timeRegex = /\d+\.\d+/;
   }
 
-  const processedLines = lines.filter((line, i) => {
-    // Handle string or LogLine type for content access
+  // 优化：使用 for 循环替代 filter
+  const processedLines: Array<LogLine | string> = [];
+  const total = lines.length;
+
+  for (let i = 0; i < total; i++) {
+    const line = lines[i];
     const content = typeof line === 'string' ? line : line.content;
+
+    timeRegex.lastIndex = 0;
     const match = content.match(timeRegex);
-    if (!match) return false;
+    if (!match) continue;
 
     // 提取时间字符串：优先取第一个捕获组，否则取全文
     const rawTimeStr = match[1] || match[0];
-    if (!rawTimeStr) return false;
+    if (!rawTimeStr) continue;
 
     // 清洗：移除常见的日志包裹符如 [ ]
     const cleanedStr = rawTimeStr.replace(/[\[\]]/g, '').trim();
-    
+
     // 解析当前行的时间/值
     let currentVal: number;
     if (/^-?\d*(\.\d+)?$/.test(cleanedStr)) {
@@ -58,15 +64,15 @@ export const timeRangeProcessor: LogProcessor = (lines, layer, chunkSize) => {
       currentVal = new Date(isoReady).getTime();
     }
 
-    if (isNaN(currentVal)) return false;
+    if (isNaN(currentVal)) continue;
 
     const isMatch = currentVal >= startThreshold && currentVal <= endThreshold;
     if (isMatch) {
       matchCount++;
       distribution[Math.floor(i / chunkSize)]++;
+      processedLines.push(line);
     }
-    return isMatch;
-  });
+  }
 
   return { processedLines, stats: { count: matchCount, distribution } };
 };

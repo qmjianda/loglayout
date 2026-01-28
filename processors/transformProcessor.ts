@@ -21,29 +21,45 @@ export const transformProcessor: LogProcessor = (lines, layer, chunkSize) => {
     return { processedLines: lines, stats: { count: 0, distribution } };
   }
 
-  const processedLines = lines.map((line, i) => {
-    // Handle string or LogLine type and use displayContent if it exists from previous transforms
+  // 优化：预分配结果数组
+  const total = lines.length;
+  const processedLines: Array<LogLine | string> = new Array(total);
+
+  for (let i = 0; i < total; i++) {
+    const line = lines[i];
     const content = typeof line === 'string' ? line : line.content;
     const currentText = (typeof line !== 'string' && line.displayContent) ? line.displayContent : content;
+
+    // 重置正则表达式状态
+    re.lastIndex = 0;
     const matches = currentText.match(re);
 
     if (matches) {
       matchCount += matches.length;
       distribution[Math.floor(i / chunkSize)]++;
       const newContent = currentText.replace(re, replaceWith);
-      
+
       if (typeof line === 'string') {
-        return {
+        processedLines[i] = {
           index: i,
           content: line,
           displayContent: newContent
-        } as LogLine;
+        };
+      } else {
+        // 优化：直接创建新对象，避免展开运算符
+        processedLines[i] = {
+          index: line.index,
+          content: line.content,
+          displayContent: newContent,
+          highlights: line.highlights,
+          isMarked: line.isMarked
+        };
       }
-      
-      return { ...line, displayContent: newContent } as LogLine;
+    } else {
+      // 没有匹配，直接复用原对象
+      processedLines[i] = line;
     }
-    return line;
-  });
+  }
 
   return { processedLines, stats: { count: matchCount, distribution } };
 };

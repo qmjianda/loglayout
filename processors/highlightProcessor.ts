@@ -22,42 +22,60 @@ export const highlightProcessor: LogProcessor = (lines, layer, chunkSize) => {
     return { processedLines: lines, stats: { count: 0, distribution } };
   }
 
-  // Handle mixed string and LogLine types
-  const processedLines = lines.map((line, i) => {
-    // Determine content to match against
+  // 优化：预分配结果数组，避免动态扩容
+  const total = lines.length;
+  const processedLines: Array<LogLine | string> = new Array(total);
+
+  for (let i = 0; i < total; i++) {
+    const line = lines[i];
     const content = typeof line === 'string' ? line : (line.displayContent || line.content);
+
+    // 重置正则表达式的 lastIndex（全局正则会保留状态）
+    re.lastIndex = 0;
     const matches = Array.from(content.matchAll(re));
-    
+
     if (matches.length > 0) {
       matchCount += matches.length;
       distribution[Math.floor(i / chunkSize)]++;
-      
-      const highlights = matches.map(m => {
-        // cast to any to avoid 'unknown' index property error
-        const matchIndex = (m as any).index ?? 0;
-        return { 
-          start: matchIndex, 
-          end: matchIndex + m[0].length, 
-          color, 
-          opacity 
-        };
-      });
+
+      const highlights = matches.map(m => ({
+        start: (m as any).index ?? 0,
+        end: ((m as any).index ?? 0) + m[0].length,
+        color,
+        opacity
+      }));
 
       if (typeof line === 'string') {
-        return {
+        processedLines[i] = {
           index: i,
           content: line,
           highlights
-        } as LogLine;
+        };
+      } else {
+        // 优化：只在有现有高亮时才合并，否则直接赋值
+        if (line.highlights && line.highlights.length > 0) {
+          processedLines[i] = {
+            index: line.index,
+            content: line.content,
+            displayContent: line.displayContent,
+            highlights: line.highlights.concat(highlights),
+            isMarked: line.isMarked
+          };
+        } else {
+          processedLines[i] = {
+            index: line.index,
+            content: line.content,
+            displayContent: line.displayContent,
+            highlights,
+            isMarked: line.isMarked
+          };
+        }
       }
-      
-      return { 
-        ...line, 
-        highlights: [...(line.highlights || []), ...highlights] 
-      } as LogLine;
+    } else {
+      // 没有匹配，直接复用原对象
+      processedLines[i] = line;
     }
-    return line;
-  });
+  }
 
   return { processedLines, stats: { count: matchCount, distribution } };
 };

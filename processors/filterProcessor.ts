@@ -20,25 +20,24 @@ export const filterProcessor: LogProcessor = (lines, layer, chunkSize) => {
     return { processedLines: lines, stats: { count: 0, distribution } };
   }
 
-  // 高性能过滤：预分配数组，避免频繁扩容
-  const processedLines: LogLine[] = [];
+  // 优化：保持原始类型，避免不必要的对象化
+  const processedLines: Array<LogLine | string> = [];
   const total = lines.length;
-  
+
   for (let i = 0; i < total; i++) {
     const line = lines[i];
     const content = typeof line === 'string' ? line : line.content;
+
+    // 重置正则表达式状态
+    re.lastIndex = 0;
     const matches = re.test(content);
     const keep = invert ? !matches : matches;
-    
+
     if (keep) {
       matchCount++;
       distribution[Math.floor(i / chunkSize)]++;
-      // 如果输入是原始字符串，这里进行对象化
-      if (typeof line === 'string') {
-          processedLines.push({ index: i, content: line });
-      } else {
-          processedLines.push(line);
-      }
+      // 优化：保持原始类型，不进行不必要的对象化
+      processedLines.push(line);
     }
   }
 

@@ -12,16 +12,23 @@ export const levelProcessor: LogProcessor = (lines, layer, chunkSize) => {
 
   const levelRegex = new RegExp(`\\b(${levels.join('|')})\\b`, 'i');
 
-  const processedLines = lines.filter((line, i) => {
-    // Handle string or LogLine type for content access
+  // 优化：使用 for 循环替代 filter
+  const processedLines: Array<LogLine | string> = [];
+  const total = lines.length;
+
+  for (let i = 0; i < total; i++) {
+    const line = lines[i];
     const content = typeof line === 'string' ? line : line.content;
+
+    levelRegex.lastIndex = 0;
     const matches = levelRegex.test(content);
+
     if (matches) {
       matchCount++;
       distribution[Math.floor(i / chunkSize)]++;
+      processedLines.push(line);
     }
-    return matches;
-  });
+  }
 
   return { processedLines, stats: { count: matchCount, distribution } };
 };
