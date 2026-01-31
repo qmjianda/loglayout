@@ -74,3 +74,59 @@ html {
 ::-webkit-scrollbar-thumb:hover {
   background: #444444;
 }
+
+/* Animations */
+@keyframes scale-in-center {
+  0% {
+    transform: scale(0.95);
+    opacity: 0;
+  }
+
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.scale-in-center {
+  animation: scale-in-center 0.4s cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+
+/* Shimmer animation for loading skeleton */
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* Fade in animation */
+@keyframes fade-in {
+  0% {
+    opacity: 0;
+  }
+
+  100% {
+    opacity: 1;
+  }
+}
+
+.fade-in {
+  animation: fade-in 0.3s ease-out both;
+}
+
+/* Skeleton line pulse */
+@keyframes skeleton-pulse {
+
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+
+  50% {
+    opacity: 0.8;
+  }
+}

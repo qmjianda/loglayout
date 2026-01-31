@@ -649,3 +649,40 @@ class FileBridge(QObject):
         parent = QApplication.activeWindow()
         path, _ = QFileDialog.getOpenFileName(parent, "Open Log File", "", "Log Files (*.log *.txt *.json);;All Files (*)")
         return path
+
+    @pyqtSlot(result=str)
+    def select_files(self) -> str:
+        """Helper for frontend to trigger native open (multiple). Returns JSON list of paths."""
+        from PyQt6.QtWidgets import QFileDialog, QApplication
+        parent = QApplication.activeWindow()
+        paths, _ = QFileDialog.getOpenFileNames(parent, "Open Log Files", "", "Log Files (*.log *.txt *.json);;All Files (*)")
+        return json.dumps(paths)
+
+    @pyqtSlot(result=str)
+    def select_folder(self) -> str:
+        """Helper for frontend to trigger native folder selection."""
+        from PyQt6.QtWidgets import QFileDialog, QApplication
+        parent = QApplication.activeWindow()
+        path = QFileDialog.getExistingDirectory(parent, "Select Folder", "")
+        return path
+
+    @pyqtSlot(str, result=str)
+    def list_logs_in_folder(self, folder_path: str) -> str:
+        """Lists all log files in a folder recursively."""
+        log_files = []
+        try:
+            for root, dirs, files in os.walk(folder_path):
+                for file in files:
+                    if file.lower().endswith(('.log', '.txt', '.json')) or '.' not in file:
+                        full_path = os.path.join(root, file)
+                        try:
+                            stats = os.stat(full_path)
+                            log_files.append({
+                                "name": file,
+                                "path": full_path,
+                                "size": stats.st_size
+                            })
+                        except: pass
+        except Exception as e:
+            print(f"Error listing folder {folder_path}: {e}")
+        return json.dumps(log_files)

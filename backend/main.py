@@ -46,14 +46,21 @@ class CustomWebView(QWebEngineView):
     def dropEvent(self, event):
         urls = event.mimeData().urls()
         if urls:
-            path = urls[0].toLocalFile()
-            print(f"Dropped file on WebView: {path}")
-            # Emit signal via bridge - we need access to the bridge
-            # We can find the window or signal via parent
             window = self.window()
             if hasattr(window, 'file_bridge'):
-                file_id = f"dropped-{int(os.path.getmtime(path))}-{os.path.getsize(path)}"
-                window.file_bridge.open_file(file_id, path)
+                for url in urls:
+                    path = url.toLocalFile()
+                    if os.path.isdir(path):
+                        # Recursive folder discovery
+                        for root, dirs, files in os.walk(path):
+                            for file in files:
+                                if file.lower().endswith(('.log', '.txt', '.json')) or '.' not in file:
+                                    full_path = os.path.join(root, file)
+                                    file_id = f"dropped-{int(os.path.getmtime(full_path))}-{os.path.getsize(full_path)}"
+                                    window.file_bridge.open_file(file_id, full_path)
+                    elif os.path.isfile(path):
+                        file_id = f"dropped-{int(os.path.getmtime(path))}-{os.path.getsize(path)}"
+                        window.file_bridge.open_file(file_id, path)
 
 
 class MainWindow(QMainWindow):
@@ -99,12 +106,19 @@ class MainWindow(QMainWindow):
     def dropEvent(self, event):
         urls = event.mimeData().urls()
         if urls:
-            path = urls[0].toLocalFile()
-            print(f"Dropped file: {path}")
-            # Emit signal via bridge (we need to trigger fileOpened on file_bridge)
-            # Since file_bridge is inside MainWindow, we need to access it
-            file_id = f"dropped-{int(os.path.getmtime(path))}-{os.path.getsize(path)}"
-            self.file_bridge.open_file(file_id, path)
+            for url in urls:
+                path = url.toLocalFile()
+                if os.path.isdir(path):
+                    # Recursive folder discovery
+                    for root, dirs, files in os.walk(path):
+                        for file in files:
+                            if file.lower().endswith(('.log', '.txt', '.json')) or '.' not in file:
+                                full_path = os.path.join(root, file)
+                                file_id = f"dropped-{int(os.path.getmtime(full_path))}-{os.path.getsize(full_path)}"
+                                self.file_bridge.open_file(file_id, full_path)
+                elif os.path.isfile(path):
+                    file_id = f"dropped-{int(os.path.getmtime(path))}-{os.path.getsize(path)}"
+                    self.file_bridge.open_file(file_id, path)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

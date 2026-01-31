@@ -62,3 +62,9 @@ graph TD
 - **Dependency Optimization**: Switched `syncLayers` dependency from `lineCount` to `rawCount` in `App.tsx` to prevent redundant backend operations.
 - **Test Consolidation**: Unified bug reproduction scripts into `tests/test_backend_core.py`, verifying pipeline scalability and mmap indexing integrity.
 - **Documentation**: Generated comprehensive bilingual (EN/CN) README.md with project overview, features, and setup guide.
+- **Improved File Opening**: Enhanced "File" and "Folder" buttons to use native OS dialogs via `select_files` and `select_folder`.
+- **Recursive Directory Discovery**: Dropping a folder or selecting a folder now automatically scans and opens all log files within it recursively.
+- **Multiple File Selection**: Native file dialog now supports selecting multiple files at once.
+- **Interactive Placeholder**: The central "Drag a file here to open" area is now clickable and serves as a primary file selector.
+- **Consistency**: Unified the logic for drag-and-drop and button-based file opening for both files and folders by moving the discovery logic to the backend.
+- **File Loading Skeleton**: Added an elegant skeleton UI loading indicator that appears when switching between files. Features a shimmer animation effect and deterministically-generated skeleton lines to provide visual feedback during the loading delay.

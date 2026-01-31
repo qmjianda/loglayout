@@ -6,6 +6,11 @@ export interface FileBridgeAPI {
     // File operations
     open_file: (fileId: string, path: string) => Promise<boolean>;
     select_file: () => Promise<string>;
+    select_files: () => Promise<string>;
+    select_folder: () => Promise<string>;
+    list_logs_in_folder: (folderPath: string) => Promise<string>;
+
+
     close_file: (fileId: string) => Promise<void>;
 
     // Line reading (Processed with highlights/filter)
@@ -94,6 +99,33 @@ export async function selectFile(): Promise<string> {
     if (!fileBridge) return "";
     return fileBridge.select_file();
 }
+
+export async function selectFiles(): Promise<string[]> {
+    if (!fileBridge) return [];
+    try {
+        const jsonStr = await fileBridge.select_files();
+        return JSON.parse(jsonStr);
+    } catch (e) {
+        return [];
+    }
+}
+
+export async function selectFolder(): Promise<string> {
+    if (!fileBridge) return "";
+    return fileBridge.select_folder();
+}
+
+export async function listLogsInFolder(folderPath: string): Promise<any[]> {
+    if (!fileBridge) return [];
+    try {
+        const jsonStr = await fileBridge.list_logs_in_folder(folderPath);
+        return JSON.parse(jsonStr);
+    } catch (e) {
+        return [];
+    }
+}
+
+
 
 export const initBridge = (): Promise<FileBridgeAPI | null> => {
     return new Promise((resolve) => {
