@@ -8,6 +8,7 @@ import { EditorGoToLineWidget } from './components/EditorGoToLineWidget';
 import { UnifiedPanel, FileInfo } from './components/UnifiedPanel';
 import { HelpPanel } from './components/HelpPanel';
 import { StatusBar } from './components/StatusBar';
+import { IndexingOverlay, FileLoadingSkeleton, PendingFilesWall } from './components/LoadingOverlays';
 import { LogLayer, LayerType, LogLine, LayerPreset } from './types';
 import { initBridge, openFile, selectFiles, selectFolder, listLogsInFolder, syncLayers, syncAll, searchRipgrep, readProcessedLines } from './bridge_client';
 
@@ -51,6 +52,7 @@ const App: React.FC = () => {
 
   // Multi-File Management
   const [files, setFiles] = useState<FileData[]>([]);
+  const [workspaceRoot, setWorkspaceRoot] = useState<{ path: string, name: string } | null>(null);
 
   // Split View Management
   const [panes, setPanes] = useState<Pane[]>([{ id: 'pane-1', fileId: null }]);
@@ -119,13 +121,19 @@ const App: React.FC = () => {
           setFiles(prev => {
             const existingIndex = prev.findIndex(f => f.id === fileId);
 
-
             if (!(window as any)._BRIDGED_COUNTS) (window as any)._BRIDGED_COUNTS = {};
             (window as any)._BRIDGED_COUNTS[fileId] = info.lineCount;
 
             if (existingIndex >= 0) {
               const newFiles = [...prev];
-              newFiles[existingIndex] = { ...newFiles[existingIndex], lineCount: info.lineCount, rawCount: info.lineCount, size: info.size };
+              const oldFile = prev[existingIndex];
+              newFiles[existingIndex] = {
+                ...oldFile,
+                lineCount: info.lineCount,
+                rawCount: info.lineCount,
+                size: info.size,
+                path: info.path || oldFile.path // Use path from backend if available
+              };
               return newFiles;
             } else {
               const newFile: FileData = {
@@ -133,7 +141,7 @@ const App: React.FC = () => {
                 name: info.name,
                 size: info.size,
                 lineCount: info.lineCount,
-                rawCount: info.lineCount, // Store original count
+                rawCount: info.lineCount,
                 layers: [],
                 isBridged: true,
                 path: info.path || info.name,
@@ -141,8 +149,6 @@ const App: React.FC = () => {
               };
               setTimeout(() => {
                 setActiveFileId(fileId);
-                // Note: No need to call openFile here, as fileLoaded signal
-                // implies the file is already indexed in the backend.
               }, 0);
 
               return [...prev, newFile];
@@ -151,13 +157,11 @@ const App: React.FC = () => {
           setBridgedUpdateTrigger(v => v + 1);
           setIsProcessing(false);
           setOperationStatus(null);
-          // 清除文件加载状态
           setLoadingFileIds(prev => {
             const next = new Set(prev);
             next.delete(fileId);
             return next;
           });
-          // CLI 文件加载完成时减少计数
           setPendingCliFiles(prev => Math.max(0, prev - 1));
         });
 
@@ -432,45 +436,60 @@ const App: React.FC = () => {
   }, []); // Remove updateLayers dependency
 
 
+  // Unified file adding logic
+  const addNewFiles = useCallback((incomingFiles: { name: string, size?: number, path: string }[], autoActivateFirst = true) => {
+    if (incomingFiles.length === 0) return;
+
+    const newFiles: FileData[] = incomingFiles.map((f, i) => {
+      const fileId = `bridged-${Date.now()}-${Math.random().toString(36).substr(2, 5)}-${i}`;
+      return {
+        id: fileId,
+        name: f.name,
+        size: f.size || 0,
+        lineCount: 0,
+        rawCount: 0,
+        layers: [],
+        isBridged: true,
+        path: f.path,
+        history: { past: [], future: [] }
+      };
+    });
+
+    setFiles(prev => [...prev, ...newFiles]);
+
+    // Activate and open the first one
+    if (autoActivateFirst) {
+      const first = newFiles[0];
+      setActiveFileId(first.id);
+      setLoadingFileIds(prev => new Set(prev).add(first.id));
+      setIsProcessing(true);
+      openFile(first.id, first.path);
+    }
+  }, []);
+
+  const handleOpenFileByPath = useCallback((path: string, name: string) => {
+    // Check if already open
+    const existing = files.find(f => f.path === path);
+    if (existing) {
+      handleFileActivate(existing.id);
+      return;
+    }
+
+    // Otherwise add and open
+    addNewFiles([{ name, path }], true);
+  }, [files, handleFileActivate, addNewFiles]);
+
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const rawFiles = event.target.files;
     if (!rawFiles || rawFiles.length === 0) return;
     const fileList = Array.from(rawFiles) as any[];
     event.target.value = '';
 
-    setIsProcessing(true);
-    try {
-      const newFiles: FileData[] = [];
-      for (let i = 0; i < fileList.length; i++) {
-        const file = fileList[i];
-        if (file.path) {
-          const fileId = `bridged-${Date.now()}-${i}`;
-          const fileData: FileData = {
-            id: fileId,
-            name: file.name,
-            size: file.size,
-            lineCount: 0,
-            rawCount: 0,
-            layers: [],
-            isBridged: true,
-            path: file.path,
-            history: { past: [], future: [] }
-          };
-          newFiles.push(fileData);
-        }
-      }
-      setFiles(prev => [...prev, ...newFiles]);
-      if (newFiles.length > 0) {
-        const first = newFiles[0];
-        setActiveFileId(first.id);
-        if (first.path) {
-          setLoadingFileIds(prev => new Set(prev).add(first.id));
-          setIsProcessing(true);
-          openFile(first.id, first.path);
-        }
-      }
-    } finally { setIsProcessing(false); }
+    const validFiles = fileList
+      .filter(f => f.path)
+      .map(f => ({ name: f.name, size: f.size, path: f.path }));
 
+    addNewFiles(validFiles);
   };
 
   const handleNativeFileSelect = async () => {
@@ -479,38 +498,13 @@ const App: React.FC = () => {
       const paths = await selectFiles();
       if (!paths || paths.length === 0) return;
 
-      const newFiles: FileData[] = [];
-      for (let i = 0; i < paths.length; i++) {
-        const path = paths[i];
-        const fileName = path.split(/[/\\]/).pop() || path;
-        const fileId = `bridged-${Date.now()}-native-${i}`;
+      const validFiles = paths.map(path => ({
+        name: path.split(/[/\\]/).pop() || path,
+        path: path
+      }));
 
-        const fileData: FileData = {
-          id: fileId,
-          name: fileName,
-          size: 0,
-          lineCount: 0,
-          rawCount: 0,
-          layers: [],
-          isBridged: true,
-          path: path,
-          history: { past: [], future: [] }
-        };
-        newFiles.push(fileData);
-      }
-
-      setFiles(prev => [...prev, ...newFiles]);
-      if (newFiles.length > 0) {
-        const first = newFiles[0];
-        setActiveFileId(first.id);
-        if (first.path) {
-          setLoadingFileIds(prev => new Set(prev).add(first.id));
-          setIsProcessing(true);
-          openFile(first.id, first.path);
-        }
-      }
+      addNewFiles(validFiles);
     } catch (e) { console.error('Native file select error:', e); }
-
   };
 
   const handleNativeFolderSelect = async () => {
@@ -519,46 +513,13 @@ const App: React.FC = () => {
       const folderPath = await selectFolder();
       if (!folderPath) return;
 
-      setIsProcessing(true);
-      const logFiles = await listLogsInFolder(folderPath);
-
-      const newFiles: FileData[] = [];
-      for (let i = 0; i < logFiles.length; i++) {
-        const file = logFiles[i];
-        const fileId = `bridged-${Date.now()}-folder-${i}`;
-        const fileData: FileData = {
-          id: fileId,
-          name: file.name,
-          size: file.size,
-          lineCount: 0,
-          rawCount: 0,
-          layers: [],
-          isBridged: true,
-          path: file.path,
-          history: { past: [], future: [] }
-        };
-        newFiles.push(fileData);
-      }
-      setFiles(prev => [...prev, ...newFiles]);
-      if (newFiles.length > 0) {
-        const first = newFiles[0];
-        setActiveFileId(first.id);
-        if (first.path) {
-          setLoadingFileIds(prev => new Set(prev).add(first.id));
-          setIsProcessing(true);
-          openFile(first.id, first.path);
-        }
-      }
+      const folderName = folderPath.split(/[/\\]/).pop() || folderPath;
+      setWorkspaceRoot({ path: folderPath, name: folderName });
     } catch (e) {
-
       console.error('Native folder select error:', e);
-    } finally {
-      setIsProcessing(false);
     }
   };
 
-
-  // 处理文件夹上传
   const handleFolderUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const rawFiles = event.target.files;
     if (!rawFiles || rawFiles.length === 0) return;
@@ -566,38 +527,11 @@ const App: React.FC = () => {
       file.name.endsWith('.log') || file.name.endsWith('.txt') || file.name.endsWith('.json') || !file.name.includes('.')
     ) as any[];
 
-    setIsProcessing(true);
-    try {
-      const newFiles: FileData[] = [];
-      for (const file of logFiles) {
-        if (file.path) {
-          const fileId = `bridged-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
-          const fileData: FileData = {
-            id: fileId,
-            name: file.name,
-            size: file.size,
-            lineCount: 0,
-            rawCount: 0,
-            layers: [],
-            isBridged: true,
-            path: file.path,
-            history: { past: [], future: [] }
-          };
-          newFiles.push(fileData);
-        }
-      }
-      setFiles(prev => [...prev, ...newFiles]);
-      if (newFiles.length > 0) {
-        const first = newFiles[0];
-        setActiveFileId(first.id);
-        if (first.path) {
-          setLoadingFileIds(prev => new Set(prev).add(first.id));
-          setIsProcessing(true);
-          openFile(first.id, first.path);
-        }
-      }
-    } finally { setIsProcessing(false); }
+    const validFiles = logFiles
+      .filter(f => f.path)
+      .map(f => ({ name: f.name, size: f.size, path: f.path }));
 
+    addNewFiles(validFiles);
   };
 
   useEffect(() => {
@@ -870,6 +804,8 @@ const App: React.FC = () => {
           />
           {activeView === 'main' && (
             <UnifiedPanel
+              workspaceRoot={workspaceRoot}
+              onOpenFileByPath={handleOpenFileByPath}
               files={fileInfoList}
               activeFileId={activeFileId}
               onFileSelect={() => {
@@ -995,132 +931,12 @@ const App: React.FC = () => {
                         </div>
 
                         {paneFileId === activeFileId && isProcessing && operationStatus?.op === 'indexing' && (
-                          <div className="absolute inset-x-0 bottom-0 top-8 z-50 flex flex-col items-center justify-center bg-[#1e1e1e]/80 backdrop-blur-sm transition-all">
-                            <div className="flex flex-col items-center p-8 rounded-2xl bg-[#252526] border border-white/10 shadow-2xl scale-in-center overflow-hidden relative">
-                              <div className="absolute inset-0 bg-blue-500/5 animate-pulse" />
-                              <div className="relative w-24 h-24 mb-6">
-                                <svg className="w-full h-full rotate-[-90deg]" viewBox="0 0 100 100">
-                                  <circle cx="50" cy="50" r="45" fill="none" stroke="#333" strokeWidth="6" />
-                                  <circle cx="50" cy="50" r="45" fill="none" stroke="#3b82f6" strokeWidth="6" strokeDasharray="282.7" strokeDashoffset={282.7 - (282.7 * loadingProgress) / 100} strokeLinecap="round" className="transition-all duration-300" />
-                                </svg>
-                                <div className="absolute inset-0 flex items-center justify-center text-xl font-black text-blue-400 font-mono">
-                                  {Math.round(loadingProgress)}%
-                                </div>
-                              </div>
-                              <h3 className="text-[13px] font-bold text-white mb-1 uppercase tracking-wider">正在构建索引</h3>
-                              <p className="text-[10px] text-gray-500 font-mono truncate max-w-[200px]">{activeFile?.name}</p>
-                              <div className="mt-6 flex gap-1.5">
-                                <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce [animation-delay:-0.3s]" />
-                                <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce [animation-delay:-0.15s]" />
-                                <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce" />
-                              </div>
-                            </div>
-                          </div>
+                          <IndexingOverlay progress={loadingProgress} fileName={activeFile?.name || ''} />
                         )}
 
                         {/* File Loading Skeleton - 文件正在切换/加载 */}
                         {paneFileId && loadingFileIds.has(paneFileId) && !operationStatus && (
-                          <div className="absolute inset-x-0 bottom-0 top-8 z-40 bg-[#1e1e1e] overflow-hidden">
-                            {/* Animated gradient shimmer overlay */}
-                            <div className="absolute inset-0 pointer-events-none">
-                              <div
-                                className="absolute inset-0 opacity-30"
-                                style={{
-                                  background: 'linear-gradient(90deg, transparent 0%, rgba(59, 130, 246, 0.08) 20%, rgba(59, 130, 246, 0.15) 50%, rgba(59, 130, 246, 0.08) 80%, transparent 100%)',
-                                  animation: 'shimmer 2s ease-in-out infinite',
-                                }}
-                              />
-                            </div>
-
-                            {/* Skeleton lines */}
-                            <div className="p-4 space-y-0">
-                              {Array.from({ length: 35 }).map((_, i) => {
-                                // 使用确定性伪随机宽度，基于行号
-                                const seed = (i * 7 + 13) % 100;
-                                const lineNumWidth = 20 + (seed % 15);
-                                const contentWidth = 15 + ((seed * 3) % 60);
-                                const hasSecondBlock = seed % 2 === 0;
-                                const secondBlockWidth = 10 + ((seed * 2) % 20);
-
-                                return (
-                                  <div
-                                    key={i}
-                                    className="flex items-center h-[20px]"
-                                    style={{
-                                      opacity: Math.max(0.3, 1 - i * 0.02)
-                                    }}
-                                  >
-                                    {/* Line number skeleton */}
-                                    <div className="w-20 pr-4 flex justify-end shrink-0">
-                                      <div
-                                        className="h-3 bg-gray-700/50 rounded animate-pulse"
-                                        style={{
-                                          width: `${lineNumWidth}px`,
-                                          animationDelay: `${i * 50}ms`
-                                        }}
-                                      />
-                                    </div>
-                                    {/* Content skeleton */}
-                                    <div className="flex-1 flex items-center gap-2">
-                                      <div
-                                        className="h-3 bg-gray-600/40 rounded animate-pulse"
-                                        style={{
-                                          width: `${contentWidth}%`,
-                                          animationDelay: `${i * 50 + 25}ms`
-                                        }}
-                                      />
-                                      {hasSecondBlock && (
-                                        <div
-                                          className="h-3 bg-gray-700/30 rounded animate-pulse"
-                                          style={{
-                                            width: `${secondBlockWidth}%`,
-                                            animationDelay: `${i * 50 + 50}ms`
-                                          }}
-                                        />
-                                      )}
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-
-                            {/* Center loading indicator */}
-                            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                              <div className="flex flex-col items-center gap-4 bg-[#252526]/95 px-8 py-6 rounded-xl border border-white/10 shadow-2xl backdrop-blur-sm">
-                                {/* Animated spinner */}
-                                <div className="relative w-12 h-12">
-                                  <svg className="w-full h-full animate-spin" viewBox="0 0 50 50">
-                                    <circle
-                                      cx="25" cy="25" r="20"
-                                      fill="none"
-                                      stroke="#333"
-                                      strokeWidth="3"
-                                    />
-                                    <circle
-                                      cx="25" cy="25" r="20"
-                                      fill="none"
-                                      stroke="url(#gradient)"
-                                      strokeWidth="3"
-                                      strokeDasharray="80 125"
-                                      strokeLinecap="round"
-                                    />
-                                    <defs>
-                                      <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                                        <stop offset="0%" stopColor="#3b82f6" />
-                                        <stop offset="100%" stopColor="#8b5cf6" />
-                                      </linearGradient>
-                                    </defs>
-                                  </svg>
-                                </div>
-                                <div className="text-center">
-                                  <p className="text-sm font-medium text-white">正在加载文件</p>
-                                  <p className="text-xs text-gray-500 mt-1 font-mono max-w-[180px] truncate">
-                                    {files.find(f => f.id === paneFileId)?.name}
-                                  </p>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
+                          <FileLoadingSkeleton fileName={files.find(f => f.id === paneFileId)?.name} />
                         )}
 
                         {paneFileId ? (
@@ -1147,59 +963,7 @@ const App: React.FC = () => {
                           </div>
 
                         ) : pendingCliFiles > 0 ? (
-                          /* CLI 文件加载中等待状态 */
-                          <div className="flex-1 flex flex-col items-center justify-center text-gray-500 bg-dark-2">
-                            <div className="flex flex-col items-center gap-5">
-                              {/* Animated file stack */}
-                              <div className="relative w-16 h-16">
-                                <svg className="w-full h-full" viewBox="0 0 64 64" fill="none">
-                                  {/* Background files */}
-                                  <rect x="12" y="8" width="36" height="44" rx="3" fill="#333" className="animate-pulse" style={{ animationDelay: '200ms' }} />
-                                  <rect x="8" y="12" width="36" height="44" rx="3" fill="#3b3b3b" className="animate-pulse" style={{ animationDelay: '100ms' }} />
-                                  {/* Front file with loading indicator */}
-                                  <rect x="4" y="16" width="36" height="44" rx="3" fill="#444" />
-                                  <rect x="10" y="26" width="20" height="2" rx="1" fill="#555" />
-                                  <rect x="10" y="32" width="24" height="2" rx="1" fill="#555" />
-                                  <rect x="10" y="38" width="16" height="2" rx="1" fill="#555" />
-                                  {/* Spinning loader */}
-                                  <circle cx="50" cy="50" r="10" fill="#252526" />
-                                  <circle
-                                    cx="50" cy="50" r="7"
-                                    fill="none"
-                                    stroke="url(#cliGradient)"
-                                    strokeWidth="2"
-                                    strokeDasharray="30 15"
-                                    strokeLinecap="round"
-                                    className="animate-spin origin-center"
-                                    style={{ transformOrigin: '50px 50px' }}
-                                  />
-                                  <defs>
-                                    <linearGradient id="cliGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                                      <stop offset="0%" stopColor="#3b82f6" />
-                                      <stop offset="100%" stopColor="#8b5cf6" />
-                                    </linearGradient>
-                                  </defs>
-                                </svg>
-                              </div>
-                              <div className="text-center">
-                                <p className="text-sm font-medium text-gray-400">Loading files...</p>
-                                <p className="text-xs mt-1 text-gray-600">
-                                  {pendingCliFiles} {pendingCliFiles === 1 ? 'file' : 'files'} remaining
-                                </p>
-                              </div>
-                              {/* Subtle shimmer bar */}
-                              <div className="w-32 h-1 bg-gray-800 rounded-full overflow-hidden">
-                                <div
-                                  className="h-full w-1/2 rounded-full"
-                                  style={{
-                                    background: 'linear-gradient(90deg, #3b82f6, #8b5cf6, #3b82f6)',
-                                    backgroundSize: '200% 100%',
-                                    animation: 'shimmer 1.5s ease-in-out infinite'
-                                  }}
-                                />
-                              </div>
-                            </div>
-                          </div>
+                          <PendingFilesWall count={pendingCliFiles} />
                         ) : (
                           <div
                             className="flex-1 flex flex-col items-center justify-center text-gray-600 bg-dark-2 cursor-pointer hover:bg-dark-1 transition-colors"

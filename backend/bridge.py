@@ -5,9 +5,52 @@ import json
 import re
 import subprocess
 import threading
+import platform
 from pathlib import Path
 from PyQt6.QtCore import QObject, pyqtSlot, pyqtSignal, QThread, pyqtProperty
 from concurrent.futures import ThreadPoolExecutor
+
+def get_log_files_recursive(folder_path):
+    """Utility to find log files in a directory recursively."""
+    log_files = []
+    try:
+        for root, _, files in os.walk(folder_path):
+            for file in files:
+                # Common log extensions or files with no extension (often logs in linux)
+                if file.lower().endswith(('.log', '.txt', '.json')) or '.' not in file:
+                    full_path = os.path.join(root, file)
+                    try:
+                        stats = os.stat(full_path)
+                        log_files.append({
+                            "name": file,
+                            "path": full_path,
+                            "size": stats.st_size
+                        })
+                    except: continue
+    except Exception as e:
+        print(f"Error walking directory {folder_path}: {e}")
+    return log_files
+
+def get_directory_contents(folder_path):
+    """Utility to list all files and folders in a directory (one level)."""
+    items = []
+    try:
+        path = Path(folder_path)
+        for entry in path.iterdir():
+            try:
+                is_dir = entry.is_dir()
+                items.append({
+                    "name": entry.name,
+                    "path": str(entry.absolute()),
+                    "isDir": is_dir,
+                    "size": entry.stat().st_size if not is_dir else 0
+                })
+            except: continue
+        # Sort: directories first, then files, then alphabetical
+        items.sort(key=lambda x: (not x['isDir'], x['name'].lower()))
+    except Exception as e:
+        print(f"Error listing directory {folder_path}: {e}")
+    return items
 
 class IndexingWorker(QThread):
     finished = pyqtSignal(object)  # array.array('Q')
@@ -324,11 +367,17 @@ class LogSession:
         self.cache = {}
         self.workers = {} 
 
-    def close(self):
-        for w in list(self.workers.values()):
-            if w.isRunning():
-                w.stop()
-                w.wait()
+    def close(self, bridge=None):
+        """Closes the session. If bridge is provided, workers are retired asynchronously."""
+        for name, worker in list(self.workers.items()):
+            if bridge:
+                bridge._retire_worker(worker)
+            else:
+                if worker.isRunning():
+                    worker.stop()
+                    worker.wait()
+        self.workers.clear()
+        
         if self.mmap:
             try: self.mmap.close()
             except: pass
@@ -388,7 +437,6 @@ class FileBridge(QObject):
             self._zombie_workers.remove(worker)
 
     def _get_rg_path(self):
-        import platform
         base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         if platform.system() == "Windows":
             return os.path.join(base_path, "bin", "windows", "rg.exe")
@@ -399,7 +447,7 @@ class FileBridge(QObject):
         """Open and index a log file into a new session."""
         try:
             if file_id in self._sessions:
-                self._sessions[file_id].close()
+                self._sessions[file_id].close(self)
             
             path = Path(file_path)
             if not path.exists(): return False
@@ -477,31 +525,32 @@ class FileBridge(QObject):
                     except: pass
 
             # Identify filtering layers
-            filter_configs = []
-            for l in session.layers:
-                if not l['enabled']: continue
-                if l['type'] == 'FILTER':
-                    q = l['config'].get('query', '')
-                    if q:
-                        filter_configs.append({
-                            'query': q,
-                            'regex': l['config'].get('regex', False),
-                            'caseSensitive': l['config'].get('caseSensitive', False)
-                        })
-                elif l['type'] == 'LEVEL':
-                    levels = l['config'].get('levels', [])
-                    if levels:
-                        # Map levels to a regex pattern like \b(ERROR|WARN)\b
-                        # Ensure levels are escaped for regex if they contain special characters
-                        escaped_levels = [re.escape(lvl) for lvl in levels]
-                        q = f"\\b({'|'.join(escaped_levels)})\\b"
-                        filter_configs.append({'query': q, 'regex': True, 'caseSensitive': True})
-
+            filter_configs = self._get_filter_configs(session.layers)
             self._start_pipeline(file_id, filter_configs)
             return True
         except Exception as e:
-            print(f"Sync all error: {e}")
+            print(f"Sync all error: {file_id}: {e}")
             return False
+
+    def _get_filter_configs(self, layers):
+        """Extracts filter configurations from layers."""
+        configs = []
+        for l in layers:
+            if not l.get('enabled'): continue
+            if l['type'] == 'FILTER':
+                q = l['config'].get('query', '')
+                if q:
+                    configs.append({
+                        'query': q,
+                        'regex': l['config'].get('regex', False),
+                        'caseSensitive': l['config'].get('caseSensitive', False)
+                    })
+            elif l['type'] == 'LEVEL':
+                levels = l['config'].get('levels', [])
+                if levels:
+                    q = f"\\b({'|'.join(map(re.escape, levels))})\\b"
+                    configs.append({'query': q, 'regex': True, 'caseSensitive': True})
+        return configs
 
     def _start_pipeline(self, file_id, filter_configs):
         if file_id not in self._sessions: return
@@ -645,25 +694,8 @@ class FileBridge(QObject):
         else:
             session.search_config = {"query": query, "regex": regex, "caseSensitive": case_sensitive}
         
-        # Identify filtering layers from current session layers
-        filter_configs = []
-        for l in session.layers:
-            if not l['enabled']: continue
-            if l['type'] == 'FILTER':
-                q = l['config'].get('query', '')
-                if q:
-                    filter_configs.append({
-                        'query': q,
-                        'regex': l['config'].get('regex', False),
-                        'caseSensitive': l['config'].get('caseSensitive', False)
-                    })
-            elif l['type'] == 'LEVEL':
-                levels = l['config'].get('levels', [])
-                if levels:
-                    escaped_levels = [re.escape(lvl) for lvl in levels]
-                    q = f"\\b({'|'.join(escaped_levels)})\\b"
-                    filter_configs.append({'query': q, 'regex': True, 'caseSensitive': True})
-
+        # Identify filtering layers
+        filter_configs = self._get_filter_configs(session.layers)
         self._start_pipeline(file_id, filter_configs)
         return True
 
@@ -671,11 +703,7 @@ class FileBridge(QObject):
     def close_file(self, file_id: str):
         if file_id in self._sessions:
             session = self._sessions[file_id]
-            # Retire all workers before deleting session
-            for w in list(session.workers.values()):
-                self._retire_worker(w)
-            session.workers.clear()
-            session.close()
+            session.close(self)
             del self._sessions[file_id]
 
     @pyqtSlot(result=str)
@@ -697,20 +725,9 @@ class FileBridge(QObject):
     @pyqtSlot(str, result=str)
     def list_logs_in_folder(self, folder_path: str) -> str:
         """Lists all log files in a folder recursively."""
-        log_files = []
-        try:
-            for root, dirs, files in os.walk(folder_path):
-                for file in files:
-                    if file.lower().endswith(('.log', '.txt', '.json')) or '.' not in file:
-                        full_path = os.path.join(root, file)
-                        try:
-                            stats = os.stat(full_path)
-                            log_files.append({
-                                "name": file,
-                                "path": full_path,
-                                "size": stats.st_size
-                            })
-                        except: pass
-        except Exception as e:
-            print(f"Error listing folder {folder_path}: {e}")
-        return json.dumps(log_files)
+        return json.dumps(get_log_files_recursive(folder_path))
+
+    @pyqtSlot(str, result=str)
+    def list_directory(self, folder_path: str) -> str:
+        """Lists all files and folders in a directory (one level)."""
+        return json.dumps(get_directory_contents(folder_path))

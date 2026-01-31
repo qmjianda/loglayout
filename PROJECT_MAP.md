@@ -75,6 +75,10 @@ graph TD
 - **Empty File Support**: Fixed a bug where empty files were reported as having 1 line.
 - **Architecture Simplification**: Removed redundant global caching in `App.tsx`, consolidating line fetching into `LogViewer`.
 - **CLI Consistency**: Unified file ID generation logic across CLI, drag-and-drop, and native selection.
-- **Startup Reliability (2026-01-31)**: Optimized the application initialization by replacing hardcoded `QTimer` delays for CLI file loading with a formal handshake protocol. The frontend now signals its readiness via `fileBridge.ready()`, triggering the backend to safely emit pending file operations. This eliminates race conditions and ensures a snappy, reliable startup experience across different system performances.
-- **Loading Status Persistence**: Fixed a UI issue where the status bar would prematurely show "Ready" while files were still being opened or indexed. Improved the state management to track pending CLI files and per-file loading states, ensuring the status bar provides accurate visual feedback during all stages of data ingestion.
-- **Visual Identity**: Generated and integrated a premium, modern application icon. Implemented native Windows taskbar support by setting a unique `AppUserModelID`, ensuring the icon appears distinctly and elegantly in the OS shell.
+- **Startup Reliability (2026-01-31)**: Optimized the application initialization by replacing hardcoded `QTimer` delays for CLI file loading with a formal handshake protocol.
+- **Loading Status Persistence**: Fixed a UI issue where the status bar would prematurely show "Ready" while files were still being opened or indexed.
+- **Visual Identity**: Generated integrated premium icon and Windows taskbar support.
+- **Codebase Cleanup & Optimization (2026-01-31)**: 
+    - **Backend**: DRYed pipeline and filter logic in `bridge.py`. Unified recursive file discovery. Improved worker retirement system to be fully asynchronous.
+    - **Frontend**: Refactored `App.tsx` by extracting complex loading UI into `LoadingOverlays.tsx`. Unified multi-channel file adding logic into a single `addNewFiles` helper. Simplified bridge initialization in `bridge_client.ts`.
+    - **Architecture**: Solidified the session lifecycle management, ensuring workers are properly retired when files are closed or replaced.

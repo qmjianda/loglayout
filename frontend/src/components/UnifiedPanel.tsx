@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { LogLayer, LayerType, LayerPreset } from '../types';
 import { LayersPanel } from './LayersPanel';
+import { FileTree } from './FileTree';
 
 // 文件信息接口
 export interface FileInfo {
@@ -13,6 +14,10 @@ export interface FileInfo {
 }
 
 interface UnifiedPanelProps {
+    // Workspace
+    workspaceRoot: { path: string, name: string } | null;
+    onOpenFileByPath: (path: string, name: string) => void;
+
     // 文件相关
     files: FileInfo[];
     activeFileId: string | null;
@@ -48,9 +53,11 @@ interface UnifiedPanelProps {
 }
 
 // 简化后的 Section ID
-type SectionId = 'explorer' | 'presets';
+type SectionId = 'openFiles' | 'explorer' | 'presets';
 
 export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
+    workspaceRoot,
+    onOpenFileByPath,
     files,
     activeFileId,
     onFileSelect,
@@ -78,11 +85,13 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
     onRedo
 }) => {
     const [collapsedSections, setCollapsedSections] = useState<Record<SectionId, boolean>>({
+        openFiles: false,
         explorer: false,
         presets: true
     });
 
     // Resize State
+    const [openedHeight, setOpenedHeight] = useState(200);
     const [presetHeight, setPresetHeight] = useState(200);
 
     // Track expanded files for tree view
@@ -131,8 +140,102 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
                 <button onClick={onRedo} disabled={!canRedo} className={`w-6 h-6 flex items-center justify-center rounded ${canRedo ? 'hover:bg-[#444] text-gray-300' : 'opacity-30 cursor-not-allowed text-gray-600'}`} title="重做 (Ctrl+Y)"><svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M21 10H11a8 8 0 00-8 8v2M21 10l-6 6m6-6l-6-6" /></svg></button>
             </div>
 
-            {/* Explorer Section */}
-            <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+            {/* 1. 已打开文件 & 图层 (Flattened List with nested layers) */}
+            <div className={`flex flex-col overflow-hidden min-h-0 ${collapsedSections.explorer ? 'flex-1' : 'shrink-0'}`}>
+                <div
+                    className="flex items-center px-3 py-2 bg-header border-b border-[#111] cursor-pointer hover:bg-[#333] select-none shrink-0"
+                    onClick={() => toggleSection('openFiles')}
+                >
+                    <svg className={`w-3 h-3 mr-2 transition-transform ${collapsedSections.openFiles ? '' : 'rotate-90'}`} fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                    </svg>
+                    <span className="text-[10px] uppercase font-black tracking-wider opacity-60">已打开</span>
+                    <span className="ml-auto text-[9px] text-gray-500">{files.length}</span>
+                </div>
+
+                {!collapsedSections.openFiles && (
+                    <div
+                        className="overflow-y-auto custom-scrollbar bg-dark-1"
+                        style={collapsedSections.explorer ? { flex: 1 } : { height: openedHeight }}
+                    >
+                        {files.length === 0 ? (
+                            <div className="p-4 text-center text-[10px] text-gray-500 italic">暂无文件 (从资源管理器中选取)</div>
+                        ) : (
+                            files.map(file => {
+                                const isExpanded = expandedFiles[file.id] !== false; // Default to true if not explicitly false
+                                const isActive = file.id === activeFileId;
+
+                                return (
+                                    <div key={file.id} className="flex flex-col border-b border-[#111]">
+                                        <div
+                                            className={`flex items-center px-2 py-1.5 cursor-pointer select-none group transition-colors relative ${isActive ? 'bg-[#37373d]' : 'hover:bg-[#2a2d2e]'}`}
+                                            onClick={(e) => { onFileActivate(file.id); toggleFile(file.id, e); }}
+                                        >
+                                            {isActive && <div className="absolute left-0 top-0 bottom-0 w-[2.5px] bg-[#007acc]" />}
+                                            <div className="w-4 h-4 mr-1 flex items-center justify-center hover:bg-white/10 rounded" onClick={(e) => toggleFile(file.id, e)}>
+                                                <svg className={`w-3 h-3 text-gray-500 transition-transform ${isExpanded ? 'rotate-90' : ''}`} fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" /></svg>
+                                            </div>
+                                            <div className="flex-1 min-w-0 pr-2">
+                                                <div className={`text-[11px] truncate ${isActive ? 'text-gray-100 font-medium' : 'text-gray-400'}`}>{file.name}</div>
+                                            </div>
+                                            <button onClick={(e) => { e.stopPropagation(); onFileRemove(file.id); }} className="opacity-0 group-hover:opacity-100 p-0.5 text-gray-500 hover:text-red-400">
+                                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                                            </button>
+                                        </div>
+                                        {isExpanded && (
+                                            <div className="border-l border-white/5 ml-7">
+                                                <LayersPanel
+                                                    layers={file.layers}
+                                                    stats={isActive ? layerStats : {}}
+                                                    selectedId={selectedLayerId}
+                                                    onSelect={onSelectLayer}
+                                                    onDrop={onLayerDrop}
+                                                    onRemove={onLayerRemove}
+                                                    onToggle={onLayerToggle}
+                                                    onUpdate={onLayerUpdate}
+                                                    onJumpToLine={isActive ? onJumpToLine : undefined}
+                                                />
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })
+                        )}
+                    </div>
+                )}
+            </div>
+
+            {/* 2. 资源管理器 (Pure Tree) */}
+            <div className={`${collapsedSections.explorer ? 'flex-none' : 'flex-1'} flex flex-col overflow-hidden min-h-0 border-t border-[#111] relative group/explorer`}>
+                {/* Resizer Handle for Opened Section */}
+                <div
+                    className="absolute -top-1 left-0 right-0 h-2 cursor-row-resize z-50 opacity-0 group-hover/explorer:opacity-100 hover:opacity-100 flex items-center justify-center transition-opacity"
+                    onMouseDown={(e) => {
+                        e.preventDefault();
+                        const startY = e.clientY;
+                        const startHeight = openedHeight;
+
+                        const handleMouseMove = (moveEvent: MouseEvent) => {
+                            // Dragging DOWN (positive delta) should INCREASE 'Opened' height
+                            const delta = moveEvent.clientY - startY;
+                            const newHeight = Math.max(80, Math.min(600, startHeight + delta));
+                            setOpenedHeight(newHeight);
+                        };
+
+                        const handleMouseUp = () => {
+                            document.removeEventListener('mousemove', handleMouseMove);
+                            document.removeEventListener('mouseup', handleMouseUp);
+                            document.body.style.cursor = '';
+                        };
+
+                        document.addEventListener('mousemove', handleMouseMove);
+                        document.addEventListener('mouseup', handleMouseUp);
+                        document.body.style.cursor = 'row-resize';
+                    }}
+                >
+                    <div className="w-8 h-1 bg-blue-500/50 rounded-full" />
+                </div>
+
                 <div
                     className="flex items-center px-3 py-2 bg-header border-b border-[#111] cursor-pointer hover:bg-[#333] select-none shrink-0"
                     onClick={() => toggleSection('explorer')}
@@ -141,86 +244,39 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
                         <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
                     </svg>
                     <span className="text-[10px] uppercase font-black tracking-wider opacity-60">资源管理器</span>
-                    <span className="ml-auto text-[9px] text-gray-500">{files.length}</span>
+                    {workspaceRoot && <span className="ml-2 text-[10px] text-blue-400 font-medium truncate shrink">{workspaceRoot.name}</span>}
                 </div>
 
                 {!collapsedSections.explorer && (
                     <div className="flex-1 flex flex-col overflow-hidden bg-dark-1">
-                        {/* 文件操作 */}
-                        <div className="flex gap-1 p-2 border-b border-[#333] shrink-0">
-                            <button onClick={onFileSelect} className="flex-1 flex items-center justify-center gap-1 text-[10px] py-1 bg-[#3c3c3c] hover:bg-[#444] text-gray-300 rounded transition-colors">
-                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                                文件
-                            </button>
-                            <button onClick={onFolderSelect} className="flex-1 flex items-center justify-center gap-1 text-[10px] py-1 bg-[#3c3c3c] hover:bg-[#444] text-gray-300 rounded transition-colors">
-                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>
-                                文件夹
-                            </button>
-                        </div>
+                        {/* 文件/文件夹选择操作 */}
+                        {!workspaceRoot && (
+                            <div className="flex gap-1 p-2 border-b border-[#333] shrink-0">
+                                <button onClick={onFileSelect} className="flex-1 flex items-center justify-center gap-1 text-[10px] py-1 bg-[#3c3c3c] hover:bg-[#444] text-gray-300 rounded transition-colors">
+                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                                    打开文件
+                                </button>
+                                <button onClick={onFolderSelect} className="flex-1 flex items-center justify-center gap-1 text-[10px] py-1 bg-[#3c3c3c] hover:bg-[#444] text-gray-300 rounded transition-colors">
+                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>
+                                    打开项目
+                                </button>
+                            </div>
+                        )}
 
-                        {/* File Tree List */}
-                        <div className="flex-1 overflow-y-auto custom-scrollbar">
-                            {files.length === 0 ? (
-                                <div className="p-4 text-center text-[10px] text-gray-500 italic">暂无文件</div>
-                            ) : (
-                                files.map(file => {
-                                    const isExpanded = expandedFiles[file.id];
-                                    const isActive = file.id === activeFileId;
-
-                                    return (
-                                        <div key={file.id} className="flex flex-col border-b border-[#111]">
-                                            {/* File Header */}
-                                            <div
-                                                draggable
-                                                onDragStart={(e) => {
-                                                    e.dataTransfer.setData('application/json', JSON.stringify({ type: 'FILE', id: file.id }));
-                                                    e.dataTransfer.effectAllowed = 'copyMove';
-                                                }}
-                                                className={`flex items-center px-2 py-1.5 cursor-pointer select-none group transition-colors ${isActive ? 'bg-[#37373d]' : 'hover:bg-[#2a2d2e]'}`}
-                                                onClick={(e) => { onFileActivate(file.id); toggleFile(file.id, e); }}
-                                            >
-                                                <div className="w-4 h-4 mr-1 flex items-center justify-center hover:bg-white/10 rounded" onClick={(e) => toggleFile(file.id, e)}>
-                                                    <svg className={`w-3 h-3 text-gray-500 transition-transform ${isExpanded ? 'rotate-90' : ''}`} fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" /></svg>
-                                                </div>
-
-                                                <svg className={`w-4 h-4 mr-2 shrink-0 ${isActive ? 'text-blue-400' : 'text-gray-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                                </svg>
-
-                                                <div className="flex-1 min-w-0 pr-2">
-                                                    <div className={`text-[11px] truncate ${isActive ? 'text-blue-400 font-medium' : 'text-gray-300'}`}>{file.name}</div>
-                                                </div>
-
-                                                <button onClick={(e) => { e.stopPropagation(); onFileRemove(file.id); }} className="opacity-0 group-hover:opacity-100 p-0.5 text-gray-500 hover:text-red-400 transition-opacity">
-                                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
-                                                </button>
-                                            </div>
-
-                                            {/* Layers List (Nested) */}
-                                            {isExpanded && (
-                                                <div className={`border-l border-white/5 ml-3 pl-0 bg-black/10`}>
-                                                    {file.layers && file.layers.length > 0 ? (
-                                                        <LayersPanel
-                                                            layers={file.layers} // Use File's layers
-                                                            stats={isActive ? layerStats : {}} // Only show stats for active file
-                                                            selectedId={selectedLayerId}
-                                                            onSelect={onSelectLayer}
-                                                            onDrop={onLayerDrop} // Warning: drag drop might cross files if not careful, but onLayerDrop in App operates on activeFileId.
-                                                            onRemove={onLayerRemove}
-                                                            onToggle={onLayerToggle}
-                                                            onUpdate={onLayerUpdate}
-                                                            onJumpToLine={isActive ? onJumpToLine : undefined}
-                                                        />
-                                                    ) : (
-                                                        <div className="pl-6 py-2 text-[10px] text-gray-600 italic">无图层</div>
-                                                    )}
-                                                </div>
-                                            )}
-                                        </div>
-                                    );
-                                })
-                            )}
-                        </div>
+                        {workspaceRoot ? (
+                            <FileTree
+                                rootPath={workspaceRoot.path}
+                                rootName={workspaceRoot.name}
+                                onFileClick={onOpenFileByPath}
+                                activeFilePath={files.find(f => f.id === activeFileId)?.path}
+                                openedFiles={files}
+                            />
+                        ) : (
+                            <div className="p-8 text-center flex flex-col items-center justify-center gap-3">
+                                <svg className="w-12 h-12 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="1" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>
+                                <p className="text-[11px] text-gray-500 leading-relaxed">未选择项目文件夹。<br />通过“打开项目”按钮浏览目录树。</p>
+                            </div>
+                        )}
                     </div>
                 )}
             </div>

@@ -8,6 +8,7 @@ export interface FileBridgeAPI {
     select_files: () => Promise<string>;
     select_folder: () => Promise<string>;
     list_logs_in_folder: (folderPath: string) => Promise<string>;
+    list_directory: (folderPath: string) => Promise<string>;
     ready: () => Promise<void>;
 
 
@@ -133,11 +134,21 @@ export async function listLogsInFolder(folderPath: string): Promise<any[]> {
     }
 }
 
+export async function listDirectory(folderPath: string): Promise<any[]> {
+    if (!fileBridge) return [];
+    try {
+        const jsonStr = await fileBridge.list_directory(folderPath);
+        return JSON.parse(jsonStr);
+    } catch (e) {
+        return [];
+    }
+}
+
 
 
 export const initBridge = (): Promise<FileBridgeAPI | null> => {
     return new Promise((resolve) => {
-        const checkQt = () => {
+        const setupChannel = () => {
             if (typeof window.qt !== 'undefined' && window.qt.webChannelTransport) {
                 new QWebChannel(window.qt.webChannelTransport, (channel: any) => {
                     // Monkey Patch: Fix for "execCallbacks[id] is not a function" and missing IDs
@@ -161,38 +172,23 @@ export const initBridge = (): Promise<FileBridgeAPI | null> => {
                     window.fileBridge = fileBridge;
                     resolve(fileBridge);
                 });
-            } else {
-                const start = Date.now();
-                const interval = setInterval(() => {
-                    if (typeof window.qt !== 'undefined' && window.qt.webChannelTransport) {
-                        clearInterval(interval);
-                        new QWebChannel(window.qt.webChannelTransport, (channel: any) => {
-                            const originalHandleResponse = channel.handleResponse;
-                            channel.handleResponse = function (data: any) {
-                                if (!data || data.id === undefined) {
-                                    if (typeof originalHandleResponse === 'function') originalHandleResponse.call(channel, data);
-                                    return;
-                                }
-                                const callback = channel.execCallbacks[data.id];
-                                if (typeof callback === 'function') {
-                                    originalHandleResponse.call(channel, data);
-                                } else {
-                                    delete channel.execCallbacks[data.id];
-                                    console.warn(`[Bridge] Suppressed invalid callback for msg ${data.id}. Type: ${typeof callback}`);
-                                }
-                            };
-                            fileBridge = channel.objects.fileBridge as FileBridgeAPI;
-                            window.fileBridge = fileBridge;
-                            resolve(fileBridge);
-                        });
-                    } else if (Date.now() - start > 5000) {
-                        clearInterval(interval);
-                        resolve(null);
-                    }
-                }, 100);
+                return true;
             }
+            return false;
         };
-        checkQt();
+
+        if (!setupChannel()) {
+            const start = Date.now();
+            const interval = setInterval(() => {
+                if (setupChannel()) {
+                    clearInterval(interval);
+                } else if (Date.now() - start > 5000) {
+                    clearInterval(interval);
+                    console.error('[Bridge] Failed to initialize QWebChannel after 5s');
+                    resolve(null);
+                }
+            }, 100);
+        }
     });
 };
 

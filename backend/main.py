@@ -6,7 +6,7 @@ from PyQt6.QtGui import QIcon
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineSettings, QWebEnginePage
 from PyQt6.QtWebChannel import QWebChannel
-from bridge import FileBridge
+from bridge import FileBridge, get_log_files_recursive
 
 class CustomWebEnginePage(QWebEnginePage):
     def javaScriptConsoleMessage(self, level, message, lineNumber, sourceID):
@@ -97,10 +97,8 @@ class MainWindow(QMainWindow):
         for path in self.pending_cli_paths:
             abs_path = os.path.abspath(path)
             if os.path.isdir(abs_path):
-                for root, dirs, files in os.walk(abs_path):
-                    for file in files:
-                        if file.lower().endswith(('.log', '.txt', '.json')) or '.' not in file:
-                            pending_files.append(os.path.join(root, file))
+                log_files = get_log_files_recursive(abs_path)
+                pending_files.extend([f['path'] for f in log_files])
             elif os.path.isfile(abs_path):
                 pending_files.append(abs_path)
         
@@ -120,13 +118,9 @@ class MainWindow(QMainWindow):
             path = url.toLocalFile()
             abs_path = os.path.abspath(path)
             if os.path.isdir(abs_path):
-                # Use the recursive discovery logic from bridge if possible, 
-                # but here we need to call open_file for each.
-                for root, dirs, files in os.walk(abs_path):
-                    for file in files:
-                        if file.lower().endswith(('.log', '.txt', '.json')) or '.' not in file:
-                            full_path = os.path.join(root, file)
-                            self._open_single_file(full_path, "dropped")
+                log_files = get_log_files_recursive(abs_path)
+                for f in log_files:
+                    self._open_single_file(f['path'], "dropped")
             elif os.path.isfile(abs_path):
                 self._open_single_file(abs_path, "dropped")
 
