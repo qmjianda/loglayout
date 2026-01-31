@@ -1,6 +1,6 @@
 import sys
 import os
-from PyQt6.QtCore import QUrl, QObject, pyqtSlot, pyqtSignal, QSize
+from PyQt6.QtCore import QUrl, QObject, pyqtSlot, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QMainWindow
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWebEngineWidgets import QWebEngineView

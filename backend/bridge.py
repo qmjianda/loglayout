@@ -4,7 +4,7 @@ import array
 import json
 import re
 import subprocess
-import threading
+
 import platform
 from pathlib import Path
 from PyQt6.QtCore import QObject, pyqtSlot, pyqtSignal, QThread, pyqtProperty
