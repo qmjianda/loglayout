@@ -51,6 +51,7 @@ const App: React.FC = () => {
   const [isFindVisible, setIsFindVisible] = useState(false);
   const [isGoToLineVisible, setIsGoToLineVisible] = useState(false);
   const [loadingFileIds, setLoadingFileIds] = useState<Set<string>>(new Set());
+  const [pendingCliFiles, setPendingCliFiles] = useState<number>(0);
 
   // Multi-File Management
   const [files, setFiles] = useState<FileData[]>([]);
@@ -188,6 +189,8 @@ const App: React.FC = () => {
             next.delete(fileId);
             return next;
           });
+          // CLI 文件加载完成时减少计数
+          setPendingCliFiles(prev => Math.max(0, prev - 1));
         });
 
         api.filterFinished?.connect?.((fileId, newTotal) => {
@@ -198,6 +201,11 @@ const App: React.FC = () => {
           setBridgedUpdateTrigger(v => v + 1);
           setOperationStatus(null);
           setIsProcessing(false);
+        });
+
+        // CLI 文件加载通知
+        api.pendingFilesCount?.connect?.((count) => {
+          setPendingCliFiles(count);
         });
 
         api.statsFinished?.connect?.((fileId, statsJson) => {
@@ -1225,6 +1233,60 @@ const App: React.FC = () => {
                             </div>
                           </div>
 
+                        ) : pendingCliFiles > 0 ? (
+                          /* CLI 文件加载中等待状态 */
+                          <div className="flex-1 flex flex-col items-center justify-center text-gray-500 bg-dark-2">
+                            <div className="flex flex-col items-center gap-5">
+                              {/* Animated file stack */}
+                              <div className="relative w-16 h-16">
+                                <svg className="w-full h-full" viewBox="0 0 64 64" fill="none">
+                                  {/* Background files */}
+                                  <rect x="12" y="8" width="36" height="44" rx="3" fill="#333" className="animate-pulse" style={{ animationDelay: '200ms' }} />
+                                  <rect x="8" y="12" width="36" height="44" rx="3" fill="#3b3b3b" className="animate-pulse" style={{ animationDelay: '100ms' }} />
+                                  {/* Front file with loading indicator */}
+                                  <rect x="4" y="16" width="36" height="44" rx="3" fill="#444" />
+                                  <rect x="10" y="26" width="20" height="2" rx="1" fill="#555" />
+                                  <rect x="10" y="32" width="24" height="2" rx="1" fill="#555" />
+                                  <rect x="10" y="38" width="16" height="2" rx="1" fill="#555" />
+                                  {/* Spinning loader */}
+                                  <circle cx="50" cy="50" r="10" fill="#252526" />
+                                  <circle
+                                    cx="50" cy="50" r="7"
+                                    fill="none"
+                                    stroke="url(#cliGradient)"
+                                    strokeWidth="2"
+                                    strokeDasharray="30 15"
+                                    strokeLinecap="round"
+                                    className="animate-spin origin-center"
+                                    style={{ transformOrigin: '50px 50px' }}
+                                  />
+                                  <defs>
+                                    <linearGradient id="cliGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                                      <stop offset="0%" stopColor="#3b82f6" />
+                                      <stop offset="100%" stopColor="#8b5cf6" />
+                                    </linearGradient>
+                                  </defs>
+                                </svg>
+                              </div>
+                              <div className="text-center">
+                                <p className="text-sm font-medium text-gray-400">Loading files...</p>
+                                <p className="text-xs mt-1 text-gray-600">
+                                  {pendingCliFiles} {pendingCliFiles === 1 ? 'file' : 'files'} remaining
+                                </p>
+                              </div>
+                              {/* Subtle shimmer bar */}
+                              <div className="w-32 h-1 bg-gray-800 rounded-full overflow-hidden">
+                                <div
+                                  className="h-full w-1/2 rounded-full"
+                                  style={{
+                                    background: 'linear-gradient(90deg, #3b82f6, #8b5cf6, #3b82f6)',
+                                    backgroundSize: '200% 100%',
+                                    animation: 'shimmer 1.5s ease-in-out infinite'
+                                  }}
+                                />
+                              </div>
+                            </div>
+                          </div>
                         ) : (
                           <div
                             className="flex-1 flex flex-col items-center justify-center text-gray-600 bg-dark-2 cursor-pointer hover:bg-dark-1 transition-colors"

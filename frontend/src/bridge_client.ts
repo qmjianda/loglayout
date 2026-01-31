@@ -45,6 +45,9 @@ export interface FileBridgeAPI {
     operationError: {
         connect: (callback: (fileId: string, op: string, message: string) => void) => void;
     };
+    pendingFilesCount: {
+        connect: (callback: (count: number) => void) => void;
+    };
 }
 
 // Global bridge instance

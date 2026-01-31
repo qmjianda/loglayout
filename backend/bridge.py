@@ -345,6 +345,9 @@ class FileBridge(QObject):
     operationError = pyqtSignal(str, str, str) # (file_id, opName, message)
     operationStatusChanged = pyqtSignal(str, str, int) # (file_id, status, percent)
     
+    # CLI file loading signal
+    pendingFilesCount = pyqtSignal(int)  # Number of files being loaded from CLI
+    
     def __init__(self):
         super().__init__()
         self._sessions = {} # file_id -> LogSession

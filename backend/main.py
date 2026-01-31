@@ -121,8 +121,54 @@ class MainWindow(QMainWindow):
                     self.file_bridge.open_file(file_id, path)
 
 if __name__ == "__main__":
-    app = QApplication(sys.argv)
+    import argparse
+    
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(description='LogLayer - Log file viewer')
+    parser.add_argument('paths', nargs='*', help='Files or folders to open')
+    args, qt_args = parser.parse_known_args()
+    
+    # Qt 需要 sys.argv[0] 作为程序名
+    qt_argv = [sys.argv[0]] + qt_args
+    
+    app = QApplication(qt_argv)
     window = MainWindow()
-    window.setAcceptDrops(True) # Enable drops
+    window.setAcceptDrops(True)
     window.show()
+    
+    # 延迟打开命令行传入的文件/文件夹
+    if args.paths:
+        from PyQt6.QtCore import QTimer
+        
+        # 先统计待打开的文件
+        pending_files = []
+        for path in args.paths:
+            abs_path = os.path.abspath(path)
+            
+            if os.path.isdir(abs_path):
+                for root, dirs, files in os.walk(abs_path):
+                    for file in files:
+                        if file.lower().endswith(('.log', '.txt', '.json')) or '.' not in file:
+                            full_path = os.path.join(root, file)
+                            pending_files.append(full_path)
+            elif os.path.isfile(abs_path):
+                pending_files.append(abs_path)
+            else:
+                print(f"Warning: Path not found: {abs_path}")
+        
+        if pending_files:
+            # 发送待加载文件数量信号
+            def notify_pending():
+                window.file_bridge.pendingFilesCount.emit(len(pending_files))
+            
+            def open_cli_files():
+                for full_path in pending_files:
+                    file_id = f"cli-{int(os.path.getmtime(full_path))}-{os.path.getsize(full_path)}"
+                    window.file_bridge.open_file(file_id, full_path)
+            
+            # 先通知前端有待加载文件（500ms 后，让界面先渲染）
+            QTimer.singleShot(500, notify_pending)
+            # 再延迟打开文件（1500ms 后，等 WebChannel 完全初始化）
+            QTimer.singleShot(1500, open_cli_files)
+    
     sys.exit(app.exec())
