@@ -100,13 +100,20 @@ export const initBridge = (): Promise<FileBridgeAPI | null> => {
         const checkQt = () => {
             if (typeof window.qt !== 'undefined' && window.qt.webChannelTransport) {
                 new QWebChannel(window.qt.webChannelTransport, (channel: any) => {
-                    // Monkey Patch: Fix for "execCallbacks[message.id] is not a function"
+                    // Monkey Patch: Fix for "execCallbacks[id] is not a function" and missing IDs
                     const originalHandleResponse = channel.handleResponse;
                     channel.handleResponse = function (data: any) {
-                        if (channel.execCallbacks[data.id]) {
+                        if (!data || data.id === undefined) {
+                            if (typeof originalHandleResponse === 'function') originalHandleResponse.call(channel, data);
+                            return;
+                        }
+                        const callback = channel.execCallbacks[data.id];
+                        if (typeof callback === 'function') {
                             originalHandleResponse.call(channel, data);
                         } else {
-                            console.warn("Suppressing QWebChannel error for ID:", data.id);
+                            // If callback is missing or invalid, clean up and ignore
+                            delete channel.execCallbacks[data.id];
+                            console.warn(`[Bridge] Suppressed invalid callback for msg ${data.id}. Type: ${typeof callback}`);
                         }
                     };
 
@@ -122,10 +129,16 @@ export const initBridge = (): Promise<FileBridgeAPI | null> => {
                         new QWebChannel(window.qt.webChannelTransport, (channel: any) => {
                             const originalHandleResponse = channel.handleResponse;
                             channel.handleResponse = function (data: any) {
-                                if (channel.execCallbacks[data.id]) {
+                                if (!data || data.id === undefined) {
+                                    if (typeof originalHandleResponse === 'function') originalHandleResponse.call(channel, data);
+                                    return;
+                                }
+                                const callback = channel.execCallbacks[data.id];
+                                if (typeof callback === 'function') {
                                     originalHandleResponse.call(channel, data);
                                 } else {
-                                    console.warn("Suppressing QWebChannel error for ID:", data.id);
+                                    delete channel.execCallbacks[data.id];
+                                    console.warn(`[Bridge] Suppressed invalid callback for msg ${data.id}. Type: ${typeof callback}`);
                                 }
                             };
                             fileBridge = channel.objects.fileBridge as FileBridgeAPI;

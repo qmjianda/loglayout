@@ -2,7 +2,7 @@
 
 ## Frontmatter
 name: project-governor
-description: Enforces the "Document-Code-Test" closed-loop governance for LogLayer Pro.
+description: Enforces the "Document-Code-Test" closed-loop governance for LogLayer.
 
 ## Instructions
 This skill is activated whenever a core logic change or bug fix is requested.

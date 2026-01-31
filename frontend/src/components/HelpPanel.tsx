@@ -10,7 +10,7 @@ export const HelpPanel: React.FC = () => {
             开发者中心: 图层架构与 Linux 部署
           </h2>
           <p className="text-sm text-gray-500 leading-relaxed">
-            欢迎阅读 LogLayer Pro 扩展指南。我们的应用采用了受 Photoshop 调整图层启发的 <b>非破坏性管道 (Non-Destructive Pipeline)</b>。
+            欢迎阅读 LogLayer 扩展指南。我们的应用采用了受 Photoshop 调整图层启发的 <b>非破坏性管道 (Non-Destructive Pipeline)</b>。
             每个图层都作为一个处理数据流的纯函数运行。
           </p>
         </header>
@@ -123,7 +123,7 @@ export const myProcessor: LogProcessor = (lines, layer, chunkSize) => {
 
           <footer className="text-center pt-10 opacity-30">
             <div className="text-[10px] font-mono tracking-widest uppercase">
-              LogLayer Pro 引擎 v2.4 • 非破坏性日志分析系统
+              LogLayer 引擎 v2.4 • 非破坏性日志分析系统
             </div>
           </footer>
         </div>

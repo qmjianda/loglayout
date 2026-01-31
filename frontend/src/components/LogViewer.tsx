@@ -15,6 +15,7 @@ interface LogViewerProps {
   onLineClick?: (index: number) => void;
   onAddLayer?: (type: LayerType, config?: any) => void;
   onVisibleRangeChange?: (startIndex: number, endIndex: number) => void;
+  updateTrigger?: number;
 }
 
 export const LogViewer: React.FC<LogViewerProps> = ({
@@ -26,7 +27,8 @@ export const LogViewer: React.FC<LogViewerProps> = ({
   highlightedIndex,
   onLineClick,
   onAddLayer,
-  onVisibleRangeChange
+  onVisibleRangeChange,
+  updateTrigger
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -38,7 +40,7 @@ export const LogViewer: React.FC<LogViewerProps> = ({
   const lastFetchRef = useRef<{ start: number; end: number }>({ start: -1, end: -1 });
 
   const lineHeight = 20;
-  const buffer = 25;
+  const buffer = 50;
   const VIRTUAL_HEIGHT_LIMIT = 10000000; // 10M pixels limit for safety, browser limit is ~33M
 
   const realTotalHeight = totalLines * lineHeight;
@@ -46,8 +48,21 @@ export const LogViewer: React.FC<LogViewerProps> = ({
   const scaleFactor = useScrollScaling ? VIRTUAL_HEIGHT_LIMIT / realTotalHeight : 1;
   const virtualTotalHeight = useScrollScaling ? VIRTUAL_HEIGHT_LIMIT : realTotalHeight;
 
+  // Clear internal cache when external trigger fires (e.g. layers sync or search clear)
+  useEffect(() => {
+    setBridgedLines(new Map());
+    lastFetchRef.current = { start: -1, end: -1 };
+  }, [updateTrigger, fileId]);
+
   // Calculate visible range with scaling support
-  const effectiveScrollTop = useScrollScaling ? scrollTop / scaleFactor : scrollTop;
+  const maxPhysicalScroll = virtualTotalHeight - viewportHeight;
+  const maxLogicalScroll = realTotalHeight - viewportHeight;
+
+  // Linear mapping: scrollTop / maxPhysicalScroll = effectiveScrollTop / maxLogicalScroll
+  const effectiveScrollTop = useScrollScaling && maxPhysicalScroll > 0
+    ? (scrollTop / maxPhysicalScroll) * maxLogicalScroll
+    : scrollTop;
+
   const startIndex = Math.max(0, Math.floor(effectiveScrollTop / lineHeight) - buffer);
   const endIndex = Math.min(totalLines, Math.floor((effectiveScrollTop + viewportHeight) / lineHeight) + buffer);
 
@@ -92,7 +107,7 @@ export const LogViewer: React.FC<LogViewerProps> = ({
     }, 10);
 
     return () => clearTimeout(timer);
-  }, [startIndex, endIndex, fileId, totalLines]);
+  }, [startIndex, endIndex, fileId, totalLines, updateTrigger]);
 
   // Get line content
   const getLine = useCallback((index: number): LogLine | string => {
@@ -114,9 +129,13 @@ export const LogViewer: React.FC<LogViewerProps> = ({
   // Scroll to index
   useEffect(() => {
     if (scrollToIndex !== null && scrollToIndex !== undefined && containerRef.current) {
-      const realScroll = Math.max(0, scrollToIndex * lineHeight - (viewportHeight / 3));
-      const targetScroll = useScrollScaling ? realScroll * scaleFactor : realScroll;
-      containerRef.current.scrollTo({ top: targetScroll, behavior: 'auto' });
+      const maxPhysicalScroll = virtualTotalHeight - viewportHeight;
+      const maxLogicalScroll = realTotalHeight - viewportHeight;
+      const targetLogicalScroll = Math.max(0, scrollToIndex * lineHeight - (viewportHeight / 3));
+      const targetPhysicalScroll = useScrollScaling && maxLogicalScroll > 0
+        ? (targetLogicalScroll / maxLogicalScroll) * maxPhysicalScroll
+        : targetLogicalScroll;
+      containerRef.current.scrollTo({ top: targetPhysicalScroll, behavior: 'auto' });
     }
   }, [scrollToIndex, totalLines, viewportHeight, useScrollScaling, scaleFactor]);
 
@@ -187,10 +206,15 @@ export const LogViewer: React.FC<LogViewerProps> = ({
       }
       const opacity = (h.opacity || 100) / 100;
       const end = Math.min(h.end, content.length);
+      // For search results, use dark text for better contrast on yellow backgrounds
+      const isSearchMatch = (h as any).isSearch || h.color === '#facc15';
       elements.push(
         <span key={`h-${i}`} style={{
           backgroundColor: h.color.startsWith('#') ? `${h.color}${Math.floor(opacity * 255).toString(16).padStart(2, '0')}` : h.color,
-          color: '#fff', padding: '0 1px', borderRadius: '1px'
+          color: isSearchMatch ? '#333' : '#fff',
+          padding: '0 1px',
+          borderRadius: '1px',
+          fontWeight: isSearchMatch ? 'bold' : 'normal'
         }}>{content.substring(h.start, end)}</span>
       );
       lastIndex = end;
@@ -214,8 +238,16 @@ export const LogViewer: React.FC<LogViewerProps> = ({
       onMouseUp={handleMouseUp}
       className="flex-1 overflow-auto bg-[#1e1e1e] font-mono text-[12px] relative custom-scrollbar"
     >
-      <div style={{ height: `${virtualTotalHeight}px`, width: '100%' }}>
-        <div className="absolute top-0 left-0 w-full" style={{ transform: `translateY(${useScrollScaling ? (startIndex * lineHeight * scaleFactor) : (startIndex * lineHeight - (scrollTop % lineHeight))}px)` }}>
+      <div style={{ height: `${virtualTotalHeight}px`, width: '100%', position: 'relative' }}>
+        <div
+          className="absolute top-0 left-0 min-w-full w-fit will-change-transform"
+          style={{
+            transform: `translate3d(0, ${Math.round(
+              (startIndex * lineHeight - effectiveScrollTop) + scrollTop
+            )}px, 0)`,
+            backfaceVisibility: 'hidden'
+          }}
+        >
           {visibleLines.map((line, idx) => {
             const absoluteIdx = startIndex + idx;
             if (absoluteIdx >= totalLines) return null;
@@ -229,14 +261,17 @@ export const LogViewer: React.FC<LogViewerProps> = ({
               <div
                 key={`${originalIndex}-${idx}`}
                 onClick={() => onLineClick?.(absoluteIdx)}
-                className={`flex hover:bg-[#2a2d2e] px-4 h-[20px] items-center whitespace-pre border-l-2 transition-colors cursor-default
+                className={`flex group hover:bg-[#2a2d2e] px-4 h-[20px] items-center whitespace-pre border-l-2 transition-colors cursor-default
                   ${isMarked ? 'border-yellow-500' : 'border-transparent'}
                   ${isHighlighted ? 'bg-blue-500/20' : ''}`}
               >
-                <div className={`w-14 text-right pr-4 shrink-0 select-none text-[10px] ${isHighlighted ? 'text-blue-400 font-bold' : 'text-gray-600'}`}>
-                  {(originalIndex + 1).toLocaleString()}
+                <div className={`w-20 text-right pr-4 shrink-0 select-none text-[10px] flex flex-col justify-center items-end leading-[9px] ${isHighlighted ? 'text-blue-400 font-semibold' : 'text-gray-600'}`}>
+                  <span>{(absoluteIdx + 1).toLocaleString()}</span>
+                  <span className={`text-[8px] mt-0.5 font-normal tracking-tighter opacity-0 group-hover:opacity-40 ${isHighlighted ? 'opacity-40' : ''} transition-opacity duration-300`}>
+                    #{(originalIndex + 1).toLocaleString()}
+                  </span>
                 </div>
-                <div className="flex-1 overflow-hidden truncate text-[#d4d4d4]">{renderLineContent(line)}</div>
+                <div className="flex-1 text-[#d4d4d4]">{renderLineContent(line)}</div>
               </div>
             );
           })}

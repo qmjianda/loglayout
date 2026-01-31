@@ -8,9 +8,11 @@ interface StatusBarProps {
   isProcessing?: boolean;
   isLayerProcessing?: boolean;
   operationStatus?: { op: string, progress: number, error?: string } | null;
+  searchMatchCount?: number;
+  currentLine?: number;
 }
 
-export const StatusBar: React.FC<StatusBarProps> = ({ lines, totalLines, size, isProcessing, isLayerProcessing, operationStatus }) => {
+export const StatusBar: React.FC<StatusBarProps> = ({ lines, totalLines, size, isProcessing, isLayerProcessing, operationStatus, searchMatchCount, currentLine }) => {
   const formatSize = (bytes: number) => {
     if (bytes === 0) return '0 B';
     const k = 1024;
@@ -51,15 +53,29 @@ export const StatusBar: React.FC<StatusBarProps> = ({ lines, totalLines, size, i
         <div className="hover:bg-white/10 px-1 cursor-pointer transition-colors opacity-80">UTF-8</div>
       </div>
       <div className="flex items-center space-x-6">
+        {searchMatchCount !== undefined && searchMatchCount > 0 && (
+          <div className="bg-yellow-500/20 px-1.5 py-0.5 rounded text-yellow-200 border border-yellow-500/30 flex items-center space-x-1">
+            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clipRule="evenodd" /></svg>
+            <span>{searchMatchCount.toLocaleString()} matches</span>
+          </div>
+        )}
         <div className="opacity-90">
-          <span className="font-mono">{(Number(lines) || 0).toLocaleString()}</span>
-          <span className="mx-1 opacity-50">/</span>
-          <span className="font-mono opacity-70">{(Number(totalLines) || 0).toLocaleString()}</span>
-          <span className="ml-1.5 opacity-60">Lines</span>
+          {lines === totalLines ? (
+            <span className="font-mono">{(Number(totalLines) || 0).toLocaleString()} Lines</span>
+          ) : (
+            <>
+              <span className="font-mono">{(Number(lines) || 0).toLocaleString()}</span>
+              <span className="mx-1 opacity-50">/</span>
+              <span className="font-mono opacity-70">{(Number(totalLines) || 0).toLocaleString()}</span>
+              <span className="ml-1.5 opacity-60">Lines</span>
+            </>
+          )}
         </div>
         <div className="opacity-90">Size: {formatSize(size || 0)}</div>
         <div className="hover:bg-white/10 px-1 cursor-pointer transition-colors hidden sm:block">Tab Size: 2</div>
-        <div className="hover:bg-white/10 px-1 cursor-pointer transition-colors font-mono">Ln 1, Col 1</div>
+        <div className="hover:bg-white/10 px-1 cursor-pointer transition-colors font-mono whitespace-nowrap">
+          Ln {currentLine || 1}, Col 1
+        </div>
       </div>
     </div>
   );

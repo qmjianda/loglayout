@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# LogLayer Pro Linux Offline Packaging Script (No NPM required)
+# LogLayer Linux Offline Packaging Script (No NPM required)
 # This script bundles all dependencies for zero-internet environments.
 
 APP_NAME="loglayer-pro"
@@ -61,7 +61,7 @@ cat > $BUILD_DIR/index.html <<EOF
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LogLayer Pro (Offline)</title>
+    <title>LogLayer (Offline)</title>
     <script src="./vendor/tailwind.js"></script>
     <script type="importmap">
     {
@@ -94,7 +94,7 @@ EOF
 echo "📜 Generating run.sh..."
 printf "#!/bin/bash\n\n" > $BUILD_DIR/run.sh
 printf "echo \"----------------------------------------\"\n" >> $BUILD_DIR/run.sh
-printf "echo \"LogLayer Pro (OFFLINE MODE) is starting...\"\n" >> $BUILD_DIR/run.sh
+printf "echo \"LogLayer (OFFLINE MODE) is starting...\"\n" >> $BUILD_DIR/run.sh
 printf "echo \"Target: http://localhost:8080\"\n" >> $BUILD_DIR/run.sh
 printf "echo \"----------------------------------------\"\n" >> $BUILD_DIR/run.sh
 printf "if command -v python3 &> /dev/null; then\n" >> $BUILD_DIR/run.sh

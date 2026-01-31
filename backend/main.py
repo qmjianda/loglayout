@@ -59,7 +59,7 @@ class CustomWebView(QWebEngineView):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("LogLayer Pro")
+        self.setWindowTitle("LogLayer")
         self.resize(1200, 800)
         os.environ['QTWEBENGINE_REMOTE_DEBUGGING'] = '12345'
 

@@ -1,4 +1,4 @@
-# LogLayer Pro: Global Design Spec
+# LogLayer: Global Design Spec
 
 ## 1. Core Logic: Large File Performance
 - **Motivation**: Browser-based file reading crashes on >500MB logs.

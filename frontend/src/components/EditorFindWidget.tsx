@@ -44,7 +44,7 @@ export const EditorFindWidget: React.FC<EditorFindWidgetProps> = ({
   const startResizing = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     setIsResizing(true);
-    
+
     const startX = e.clientX;
     const startWidth = width;
 
@@ -66,13 +66,13 @@ export const EditorFindWidget: React.FC<EditorFindWidgetProps> = ({
   }, [width]);
 
   return (
-    <div 
+    <div
       ref={widgetRef}
       style={{ width: `${width}px` }}
-      className={`absolute top-2 right-8 z-30 bg-[#252526] border border-[#454545] shadow-2xl rounded flex items-center p-1 space-x-1 animate-in slide-in-from-top-2 duration-150 ${isResizing ? 'ring-1 ring-blue-500/50' : ''}`}
+      className={`absolute top-2 right-8 z-30 bg-[#252526] border border-[#454545] shadow-2xl rounded flex items-center p-1 space-x-1 animate-in slide-in-from-top-2 duration-150 select-none ${isResizing ? 'ring-1 ring-blue-500/50' : ''}`}
     >
       {/* Resizer Handle */}
-      <div 
+      <div
         onMouseDown={startResizing}
         className="absolute left-0 top-0 bottom-0 w-1.5 cursor-ew-resize hover:bg-blue-500/30 transition-colors z-40 group"
         title="拖动调整宽度"
@@ -88,9 +88,9 @@ export const EditorFindWidget: React.FC<EditorFindWidgetProps> = ({
           onChange={(e) => onQueryChange(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder="查找"
-          className="bg-transparent text-white text-xs px-2 py-1 w-full focus:outline-none"
+          className="bg-transparent text-white text-xs px-2 py-1 w-full focus:outline-none select-text"
         />
-        
+
         <div className="flex items-center pr-1 bg-[#3c3c3c] shrink-0">
           <button
             onClick={() => onConfigChange(prev => ({ ...prev, caseSensitive: !prev.caseSensitive }))}
@@ -104,7 +104,7 @@ export const EditorFindWidget: React.FC<EditorFindWidgetProps> = ({
             className={`w-5 h-5 flex items-center justify-center rounded text-[10px] transition-colors ${config.wholeWord ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-[#555]'}`}
             title="全字匹配 (Alt+W)"
           >
-            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="3" d="M3 12h18M3 6h18M3 18h18"/></svg>
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="3" d="M3 12h18M3 6h18M3 18h18" /></svg>
           </button>
           <button
             onClick={() => onConfigChange(prev => ({ ...prev, regex: !prev.regex }))}
@@ -116,31 +116,31 @@ export const EditorFindWidget: React.FC<EditorFindWidgetProps> = ({
         </div>
       </div>
 
-      <div className="flex items-center px-2 border-r border-white/10 text-[10px] text-gray-500 font-mono min-w-[70px] justify-center shrink-0">
+      <div className="flex items-center px-2 border-r border-white/10 text-[10px] text-gray-500 font-mono min-w-[70px] justify-center shrink-0 select-none">
         {matchCount > 0 ? `${currentMatch} / ${matchCount}` : '无结果'}
       </div>
 
-      <div className="flex items-center shrink-0">
+      <div className="flex items-center shrink-0 select-none">
         <button
           onClick={() => onNavigate('prev')}
           className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-white hover:bg-[#3c3c3c] rounded transition-colors"
           title="上一个匹配项 (Shift+Enter)"
         >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 15l7-7 7 7"/></svg>
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 15l7-7 7 7" /></svg>
         </button>
         <button
           onClick={() => onNavigate('next')}
           className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-white hover:bg-[#3c3c3c] rounded transition-colors"
           title="下一个匹配项 (Enter)"
         >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 9l-7 7-7-7"/></svg>
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 9l-7 7-7-7" /></svg>
         </button>
         <button
           onClick={onClose}
           className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-white hover:bg-[#3c3c3c] rounded transition-colors ml-1"
           title="关闭 (Escape)"
         >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="3" d="M6 18L18 6M6 6l12 12"/></svg>
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="3" d="M6 18L18 6M6 6l12 12" /></svg>
         </button>
       </div>
     </div>

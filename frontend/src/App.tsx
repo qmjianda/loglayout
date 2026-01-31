@@ -31,8 +31,9 @@ interface FileData {
   name: string;
   size: number;
   lineCount: number;
+  rawCount: number; // Original line count (for status bar)
   layers: LogLayer[];
-  isBridged: true; // All files are now bridged
+  isBridged: true;
   path?: string;
   history?: {
     past: LogLayer[][];
@@ -105,12 +106,18 @@ const App: React.FC = () => {
           setFiles(prev => {
             const existingIndex = prev.findIndex(f => f.id === fileId);
 
-            const setupVirtualLines = (fid: string, lineCount: number) => {
+            const setupVirtualLines = (fid: string) => {
               if (!GLOBAL_BRIDGED_CACHES[fid]) GLOBAL_BRIDGED_CACHES[fid] = new Map<number, string>();
               const virtualLines = new Proxy([] as string[], {
                 get: (target, prop) => {
-                  if (prop === 'length') return lineCount;
+                  if (prop === 'length') {
+                    // Reactive length: always get the latest count from global state if possible
+                    // However, we need a reliable way to get 'lineCount' for this specific fid.
+                    // Let's use a global store for line counts too.
+                    return (window as any)._BRIDGED_COUNTS?.[fid] || 0;
+                  }
                   if (prop === 'slice') return (s: number, e: number) => {
+                    const lineCount = (window as any)._BRIDGED_COUNTS?.[fid] || 0;
                     const res = [];
                     const start = s < 0 ? lineCount + s : s;
                     const end = e === undefined ? lineCount : (e < 0 ? lineCount + e : e);
@@ -132,50 +139,51 @@ const App: React.FC = () => {
                 },
                 ownKeys: () => ['length'],
                 getOwnPropertyDescriptor: (target, prop) => {
-                  if (prop === 'length') return { enumerable: true, configurable: true, value: lineCount };
-                  return undefined;
+                  return { enumerable: true, configurable: true };
                 }
               });
               GLOBAL_BRIDGED_LINES[fid] = virtualLines;
               GLOBAL_PROCESSED_LOGS[fid] = virtualLines;
             };
 
+            if (!(window as any)._BRIDGED_COUNTS) (window as any)._BRIDGED_COUNTS = {};
+            (window as any)._BRIDGED_COUNTS[fileId] = info.lineCount;
+
             if (existingIndex >= 0) {
               const newFiles = [...prev];
-              setupVirtualLines(fileId, info.lineCount);
-              newFiles[existingIndex] = { ...newFiles[existingIndex], lineCount: info.lineCount, size: info.size };
+              setupVirtualLines(fileId);
+              newFiles[existingIndex] = { ...newFiles[existingIndex], lineCount: info.lineCount, rawCount: info.lineCount, size: info.size };
               return newFiles;
             } else {
-              // Register new file from bridge (e.g. dropped on native window)
-              setupVirtualLines(fileId, info.lineCount);
+              setupVirtualLines(fileId);
               const newFile: FileData = {
                 id: fileId,
                 name: info.name,
                 size: info.size,
                 lineCount: info.lineCount,
+                rawCount: info.lineCount, // Store original count
                 layers: [],
                 isBridged: true,
                 path: info.path || info.name,
                 history: { past: [], future: [] }
               };
-
-              // Apply default preset if available
-              // (Note: presets state might be stale in this closure, but it's better than nothing)
-              const newFiles = [...prev, newFile];
-              // We can't easily access the current 'presets' state here perfectly 
-              // but handleFileActivate will handle it for existing files.
-              // For a new drop, we might want to auto-activate.
               setTimeout(() => handleFileActivate(fileId), 0);
-              return newFiles;
+              return [...prev, newFile];
             }
           });
           setBridgedUpdateTrigger(v => v + 1);
+          setIsProcessing(false);
+          setOperationStatus(null);
         });
 
         api.filterFinished?.connect?.((fileId, newTotal) => {
+          if (!(window as any)._BRIDGED_COUNTS) (window as any)._BRIDGED_COUNTS = {};
+          (window as any)._BRIDGED_COUNTS[fileId] = newTotal;
+
           setFiles(prev => prev.map(f => f.id === fileId ? { ...f, lineCount: newTotal } : f));
           setBridgedUpdateTrigger(v => v + 1);
           setOperationStatus(null);
+          setIsProcessing(false);
         });
 
         api.statsFinished?.connect?.((fileId, statsJson) => {
@@ -193,6 +201,7 @@ const App: React.FC = () => {
             const matches = JSON.parse(resultsJson);
             if (activeFileId === fileId) {
               setBridgedMatches(matches);
+              setBridgedUpdateTrigger(v => v + 1);
               setIsSearching(false);
               setOperationStatus(null);
             }
@@ -444,6 +453,7 @@ const App: React.FC = () => {
             name: file.name,
             size: file.size,
             lineCount: 0,
+            rawCount: 0,
             layers: [],
             isBridged: true,
             path: file.path,
@@ -473,6 +483,7 @@ const App: React.FC = () => {
         name: fileName,
         size: 0,
         lineCount: 0,
+        rawCount: 0,
         layers: [],
         isBridged: true,
         path: path,
@@ -506,6 +517,7 @@ const App: React.FC = () => {
             name: file.name,
             size: file.size,
             lineCount: 0,
+            rawCount: 0,
             layers: [],
             isBridged: true,
             path: file.path,
@@ -527,25 +539,27 @@ const App: React.FC = () => {
     const timer = setTimeout(() => {
       syncLayers(activeFileId, layers);
 
-      // Force refresh visible lines by clearing cache
       if (GLOBAL_BRIDGED_CACHES[activeFileId]) {
         GLOBAL_BRIDGED_CACHES[activeFileId].clear();
       }
-      setBridgedUpdateTrigger(v => v + 1);
+      // Note: bridgedUpdateTrigger will be updated when filter/search signals arrive
 
       // Also handle search via bridge
       if (searchQuery) {
         setIsSearching(true);
+        setCurrentMatchIndex(-1); // Reset match selection when context changes
         searchRipgrep(activeFileId, searchQuery, searchConfig.regex, searchConfig.caseSensitive);
       } else {
+        if (activeFileId) searchRipgrep(activeFileId, '', false, false);
         setBridgedMatches([]);
         setIsSearching(false);
+        setCurrentMatchIndex(-1);
       }
 
       setIsLayerProcessing(false);
     }, 300);
     return () => clearTimeout(timer);
-  }, [layers, searchQuery, searchConfig, activeFileId, activeFile?.id]);
+  }, [layersFunctionalHash, searchQuery, searchConfig, activeFileId, activeFile?.rawCount]);
 
   const addLayer = (type: LayerType, initialConfig: any = {}) => {
     const newId = Math.random().toString(36).substr(2, 9);
@@ -603,13 +617,20 @@ const App: React.FC = () => {
   }, [updateLayers]);
 
   const handleJumpToLine = (index: number) => {
-    const total = processedLogs.length;
+    const total = activeFile?.lineCount || 0;
     if (total === 0) return;
 
     const boundedIndex = Math.max(0, Math.min(index, total - 1));
+
+    // Batch updates
     setScrollToIndex(boundedIndex);
     setHighlightedIndex(boundedIndex);
-    setTimeout(() => setScrollToIndex(null), 50);
+
+    // Clear the scroll signal after a delay to allow UI to react
+    // and to allow jumping to the same line multiple times
+    setTimeout(() => {
+      setScrollToIndex(null);
+    }, 150);
   };
 
   const handleLogViewerInteraction = () => {
@@ -648,14 +669,22 @@ const App: React.FC = () => {
       if (bridgedMatches.length === 0) return;
 
       let nextIdx = -1;
-      const currentPos = currentMatchIndex;
+      // Start searching from the currently highlighted line or the last known match
+      const currentPos = (highlightedIndex !== null) ? highlightedIndex : currentMatchIndex;
 
       if (direction === 'next') {
         const found = bridgedMatches.find(m => m > currentPos);
         nextIdx = found !== undefined ? found : bridgedMatches[0];
       } else {
-        const found = [...bridgedMatches].reverse().find(m => m < currentPos);
-        nextIdx = found !== undefined ? found : bridgedMatches[bridgedMatches.length - 1];
+        // Optimized backward search for large match arrays
+        for (let i = bridgedMatches.length - 1; i >= 0; i--) {
+          if (bridgedMatches[i] < currentPos) {
+            nextIdx = bridgedMatches[i];
+            break;
+          }
+        }
+        // Wrap around to the last match if none found before currentPos
+        if (nextIdx === -1) nextIdx = bridgedMatches[bridgedMatches.length - 1];
       }
 
       if (nextIdx !== -1) {
@@ -787,7 +816,7 @@ const App: React.FC = () => {
         <div className="flex items-center space-x-4">
           <span className="text-blue-400 font-black tracking-tighter flex items-center cursor-default">
             <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5-10-5zM2 17l10 5 10-5-10-5-10 5zM2 12l10 5 10-5-10-5-10 5z" /></svg>
-            LOGLAYER PRO
+            LogLayer
           </span>
         </div>
         <div className="text-[10px] text-gray-500 font-mono truncate max-w-xs">
@@ -883,7 +912,7 @@ const App: React.FC = () => {
           )}
         </div>
 
-        <div className="flex-1 flex flex-col min-w-0 bg-[#1e1e1e] relative select-text">
+        <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-[#1e1e1e] relative select-text overflow-hidden">
           {activeView === 'help' ? (
             <HelpPanel />
           ) : (
@@ -898,13 +927,18 @@ const App: React.FC = () => {
                   matchCount={searchMatchCount}
                   currentMatch={currentMatchNumber}
                   onNavigate={findNextSearchMatch}
-                  onClose={() => setIsFindVisible(false)}
+                  onClose={() => {
+                    setIsFindVisible(false);
+                    setSearchQuery('');
+                    setBridgedMatches([]);
+                    setCurrentMatchIndex(-1);
+                  }}
                 />
               )}
 
               {isGoToLineVisible && (
                 <EditorGoToLineWidget
-                  totalLines={processedLogs.length}
+                  totalLines={activeFile?.lineCount || 0}
                   onGo={(lineNum) => {
                     handleJumpToLine(lineNum - 1);
                     setIsGoToLineVisible(false);
@@ -915,14 +949,14 @@ const App: React.FC = () => {
 
               {/* Split View Editor Area */}
               {/* Simple Flexbox Editor Area (Replaces crashing PanelGroup) */}
-              <div className="flex-1 flex overflow-hidden min-w-0">
+              <div className="flex-1 flex overflow-hidden min-w-0 min-h-0">
                 {panes.map((pane, index) => {
                   const paneFileId = pane.fileId;
                   const processedData = paneFileId ? processedCache[paneFileId] : null;
                   const paneStats = processedData?.stats || {};
 
                   return (
-                    <div key={pane.id} className="flex-1 flex flex-col min-w-0 bg-[#1e1e1e] relative border-r border-[#111]">
+                    <div key={pane.id} className="flex-1 flex flex-col min-w-0 min-h-0 bg-[#1e1e1e] relative border-r border-[#111] overflow-hidden">
                       <div
                         className={`flex-1 flex flex-col min-h-0 relative ${activePaneId === pane.id ? 'ring-1 ring-blue-500/30' : ''}`}
                         onClick={() => setActivePaneId(pane.id)}
@@ -943,7 +977,7 @@ const App: React.FC = () => {
                         </div>
 
                         {paneFileId ? (
-                          <div className="flex-1 flex flex-col relative min-h-0">
+                          <div className="flex-1 flex flex-col relative min-h-0 overflow-hidden">
                             <LogViewer
                               totalLines={(() => {
                                 const file = files.find(f => f.id === pane.fileId);
@@ -963,9 +997,11 @@ const App: React.FC = () => {
                               highlightedIndex={activePaneId === pane.id ? highlightedIndex : null}
                               onLineClick={(idx) => {
                                 if (activePaneId !== pane.id) setActivePaneId(pane.id);
+                                setHighlightedIndex(idx);
                               }}
                               onAddLayer={(type, config) => addLayer(type, config)}
                               onVisibleRangeChange={handleVisibleRangeChange}
+                              updateTrigger={bridgedUpdateTrigger}
                             />
                             {/* Scrollbar Heatmap (Simplified) */}
                             <div className="absolute right-0 top-0 bottom-0 w-3 bg-black/20 pointer-events-none border-l border-white/5 select-none z-10">
@@ -995,12 +1031,14 @@ const App: React.FC = () => {
         </div>
       </div>
       <StatusBar
-        lines={processedLogs.length}
-        totalLines={activeFile?.lineCount || 0}
+        lines={activeFile?.lineCount || 0}
+        totalLines={activeFile?.rawCount || 0}
         size={fileSize}
         isProcessing={isProcessing}
         isLayerProcessing={isLayerProcessing}
         operationStatus={operationStatus}
+        searchMatchCount={searchMatchCount}
+        currentLine={(highlightedIndex !== null) ? highlightedIndex + 1 : undefined}
       />
     </div>
   );
