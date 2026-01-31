@@ -9,7 +9,7 @@ import { UnifiedPanel, FileInfo } from './components/UnifiedPanel';
 import { HelpPanel } from './components/HelpPanel';
 import { StatusBar } from './components/StatusBar';
 import { LogLayer, LayerType, LogLine, LayerPreset } from './types';
-import { initBridge, openFile, selectFile, selectFiles, selectFolder, listLogsInFolder, syncLayers, searchRipgrep, readProcessedLines } from './bridge_client';
+import { initBridge, openFile, selectFiles, selectFolder, listLogsInFolder, syncLayers, syncAll, searchRipgrep, readProcessedLines } from './bridge_client';
 
 
 const DEFAULT_PRESET_ID = 'system-default-preset';
@@ -21,10 +21,6 @@ interface Pane {
   fileId: string | null;
 }
 
-// Global cache for bridged data to escape React's state management / DevTools freezing
-const GLOBAL_BRIDGED_LINES: Record<string, string[]> = {};
-const GLOBAL_BRIDGED_CACHES: Record<string, Map<number, string>> = {};
-const GLOBAL_PROCESSED_LOGS: Record<string, Array<LogLine | string>> = {};
 
 // File Data Interface
 interface FileData {
@@ -71,11 +67,18 @@ const App: React.FC = () => {
 
   // 激活文件
   function handleFileActivate(fileId: string) {
+    if (activeFileId === fileId) return;
+
     setActiveFileId(fileId);
     const file = files.find(f => f.id === fileId);
-    if (file?.path) {
+
+    // 只有在文件未加载时才调用 openFile
+    const isLoaded = (window as any)._BRIDGED_COUNTS && (window as any)._BRIDGED_COUNTS[fileId] !== undefined;
+
+    if (file?.path && !isLoaded) {
       // 标记文件正在加载
       setLoadingFileIds(prev => new Set(prev).add(fileId));
+      setIsProcessing(true); // 立即标记加速渲染
       openFile(fileId, file.path);
     }
   }
@@ -95,6 +98,11 @@ const App: React.FC = () => {
   const [bridgedUpdateTrigger, setBridgedUpdateTrigger] = useState(0);
   const lastFetchedRange = useRef<{ start: number, end: number }>({ start: -1, end: -1 });
 
+  const activeFileIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    activeFileIdRef.current = activeFileId;
+  }, [activeFileId]);
+
   // Initialize Bridge
   useEffect(() => {
     initBridge().then(api => {
@@ -111,56 +119,15 @@ const App: React.FC = () => {
           setFiles(prev => {
             const existingIndex = prev.findIndex(f => f.id === fileId);
 
-            const setupVirtualLines = (fid: string) => {
-              if (!GLOBAL_BRIDGED_CACHES[fid]) GLOBAL_BRIDGED_CACHES[fid] = new Map<number, string>();
-              const virtualLines = new Proxy([] as string[], {
-                get: (target, prop) => {
-                  if (prop === 'length') {
-                    // Reactive length: always get the latest count from global state if possible
-                    // However, we need a reliable way to get 'lineCount' for this specific fid.
-                    // Let's use a global store for line counts too.
-                    return (window as any)._BRIDGED_COUNTS?.[fid] || 0;
-                  }
-                  if (prop === 'slice') return (s: number, e: number) => {
-                    const lineCount = (window as any)._BRIDGED_COUNTS?.[fid] || 0;
-                    const res = [];
-                    const start = s < 0 ? lineCount + s : s;
-                    const end = e === undefined ? lineCount : (e < 0 ? lineCount + e : e);
-                    const cache = GLOBAL_BRIDGED_CACHES[fid];
-                    for (let i = start; i < end; i++) res.push(cache?.get(i) || "");
-                    return res;
-                  };
-                  const idx = typeof prop === 'string' ? parseInt(prop) : NaN;
-                  if (!isNaN(idx)) return GLOBAL_BRIDGED_CACHES[fid]?.get(idx) || "";
-                  return (target as any)[prop];
-                },
-                set: (target, prop, value) => {
-                  const idx = typeof prop === 'string' ? parseInt(prop) : NaN;
-                  if (!isNaN(idx)) {
-                    GLOBAL_BRIDGED_CACHES[fid]!.set(idx, value);
-                    return true;
-                  }
-                  return Reflect.set(target, prop, value);
-                },
-                ownKeys: () => ['length'],
-                getOwnPropertyDescriptor: (target, prop) => {
-                  return { enumerable: true, configurable: true };
-                }
-              });
-              GLOBAL_BRIDGED_LINES[fid] = virtualLines;
-              GLOBAL_PROCESSED_LOGS[fid] = virtualLines;
-            };
 
             if (!(window as any)._BRIDGED_COUNTS) (window as any)._BRIDGED_COUNTS = {};
             (window as any)._BRIDGED_COUNTS[fileId] = info.lineCount;
 
             if (existingIndex >= 0) {
               const newFiles = [...prev];
-              setupVirtualLines(fileId);
               newFiles[existingIndex] = { ...newFiles[existingIndex], lineCount: info.lineCount, rawCount: info.lineCount, size: info.size };
               return newFiles;
             } else {
-              setupVirtualLines(fileId);
               const newFile: FileData = {
                 id: fileId,
                 name: info.name,
@@ -174,7 +141,8 @@ const App: React.FC = () => {
               };
               setTimeout(() => {
                 setActiveFileId(fileId);
-                openFile(fileId, info.path || info.name);
+                // Note: No need to call openFile here, as fileLoaded signal
+                // implies the file is already indexed in the backend.
               }, 0);
 
               return [...prev, newFile];
@@ -193,14 +161,30 @@ const App: React.FC = () => {
           setPendingCliFiles(prev => Math.max(0, prev - 1));
         });
 
-        api.filterFinished?.connect?.((fileId, newTotal) => {
+        api.pipelineFinished?.connect?.((fileId, newTotal, resultsJson) => {
           if (!(window as any)._BRIDGED_COUNTS) (window as any)._BRIDGED_COUNTS = {};
           (window as any)._BRIDGED_COUNTS[fileId] = newTotal;
 
-          setFiles(prev => prev.map(f => f.id === fileId ? { ...f, lineCount: newTotal } : f));
-          setBridgedUpdateTrigger(v => v + 1);
-          setOperationStatus(null);
-          setIsProcessing(false);
+          try {
+            const matches = JSON.parse(resultsJson);
+
+            // Atomic update for both files (total count) and cache (search matches)
+            setFiles(prev => prev.map(f => f.id === fileId ? { ...f, lineCount: newTotal } : f));
+            setProcessedCache(prev => ({
+              ...prev,
+              [fileId]: { ...prev[fileId], searchMatches: matches }
+            }));
+
+            setBridgedUpdateTrigger(v => v + 1);
+
+            if (activeFileIdRef.current === fileId) {
+              setOperationStatus(null);
+              setIsProcessing(false);
+              setIsSearching(false);
+            }
+          } catch (e) {
+            console.error('Pipeline parse error:', e);
+          }
         });
 
         // CLI 文件加载通知
@@ -213,25 +197,13 @@ const App: React.FC = () => {
             const stats = JSON.parse(statsJson);
             setProcessedCache(prev => ({
               ...prev,
-              [fileId]: { ...prev[fileId], stats: { ...prev[fileId]?.stats, ...stats } }
+              [fileId]: { ...prev[fileId], layerStats: { ...prev[fileId]?.layerStats, ...stats } }
             }));
           } catch (e) { console.error('Stats parse error:', e); }
         });
 
-        api.searchFinished?.connect?.((fileId, resultsJson) => {
-          try {
-            const matches = JSON.parse(resultsJson);
-            if (activeFileId === fileId) {
-              setBridgedMatches(matches);
-              setBridgedUpdateTrigger(v => v + 1);
-              setIsSearching(false);
-              setOperationStatus(null);
-            }
-          } catch (e) { console.error('Search parse error:', e); }
-        });
-
         api.operationStarted?.connect?.((fileId, op) => {
-          if (activeFileId === fileId) {
+          if (activeFileIdRef.current === fileId) {
             setOperationStatus({ op, progress: 0 });
             setLoadingProgress(0);
             if (op === 'searching') setIsSearching(true);
@@ -239,22 +211,23 @@ const App: React.FC = () => {
           }
         });
 
-
         api.operationProgress?.connect?.((fileId, op, progress) => {
-          if (activeFileId === fileId) {
+          if (activeFileIdRef.current === fileId) {
             setOperationStatus(prev => prev ? { ...prev, progress } : { op, progress });
             setLoadingProgress(progress);
           }
         });
 
-
         api.operationError?.connect?.((fileId, op, message) => {
-          if (activeFileId === fileId) {
+          if (activeFileIdRef.current === fileId) {
             setOperationStatus({ op, progress: 0, error: message });
             setIsProcessing(false);
             setIsSearching(false);
           }
         });
+
+        // Notify backend that we are ready to receive files
+        api.ready();
       }
     });
   }, []); // Initialize bridge only once on mount
@@ -270,16 +243,14 @@ const App: React.FC = () => {
 
   // Processing Cache (Per File)
   const [processedCache, setProcessedCache] = useState<Record<string, {
-    logs: Array<LogLine | string>;
-    stats: Record<string, { count: number; distribution: number[] }>;
-    rawStats: Record<string, number[]>;
+    layerStats: Record<string, { count: number; distribution: number[] }>;
+    searchMatches: number[];
   }>>({});
 
-  // Convenience accessors for Active File (to maintain compatibility with existing logic components)
+  // Convenience accessors for Active File
   const activeProcessed = activeFileId ? processedCache[activeFileId] : null;
-  const processedLogs = (activeFile?.isBridged ? GLOBAL_PROCESSED_LOGS[activeFileId!] : activeProcessed?.logs) || [];
-  const layerStats = activeProcessed?.stats || {};
-  const rawStats = activeProcessed?.rawStats || {};
+  const layerStats = activeProcessed?.layerStats || {};
+  const bridgedMatches = activeProcessed?.searchMatches || [];
 
   const [presets, setPresets] = useState<LayerPreset[]>([]);
   const [sidebarWidth, setSidebarWidth] = useState(288); // Default 72 * 4 = 288px
@@ -289,7 +260,6 @@ const App: React.FC = () => {
   const [operationStatus, setOperationStatus] = useState<{ op: string, progress: number, error?: string } | null>(null);
 
   // Bridged search state
-  const [bridgedMatches, setBridgedMatches] = useState<number[]>([]);
   const [isSearching, setIsSearching] = useState(false);
 
   // Search state
@@ -493,7 +463,11 @@ const App: React.FC = () => {
       if (newFiles.length > 0) {
         const first = newFiles[0];
         setActiveFileId(first.id);
-        if (first.path) openFile(first.id, first.path);
+        if (first.path) {
+          setLoadingFileIds(prev => new Set(prev).add(first.id));
+          setIsProcessing(true);
+          openFile(first.id, first.path);
+        }
       }
     } finally { setIsProcessing(false); }
 
@@ -529,7 +503,11 @@ const App: React.FC = () => {
       if (newFiles.length > 0) {
         const first = newFiles[0];
         setActiveFileId(first.id);
-        if (first.path) openFile(first.id, first.path);
+        if (first.path) {
+          setLoadingFileIds(prev => new Set(prev).add(first.id));
+          setIsProcessing(true);
+          openFile(first.id, first.path);
+        }
       }
     } catch (e) { console.error('Native file select error:', e); }
 
@@ -565,7 +543,11 @@ const App: React.FC = () => {
       if (newFiles.length > 0) {
         const first = newFiles[0];
         setActiveFileId(first.id);
-        if (first.path) openFile(first.id, first.path);
+        if (first.path) {
+          setLoadingFileIds(prev => new Set(prev).add(first.id));
+          setIsProcessing(true);
+          openFile(first.id, first.path);
+        }
       }
     } catch (e) {
 
@@ -608,7 +590,11 @@ const App: React.FC = () => {
       if (newFiles.length > 0) {
         const first = newFiles[0];
         setActiveFileId(first.id);
-        if (first.path) openFile(first.id, first.path);
+        if (first.path) {
+          setLoadingFileIds(prev => new Set(prev).add(first.id));
+          setIsProcessing(true);
+          openFile(first.id, first.path);
+        }
       }
     } finally { setIsProcessing(false); }
 
@@ -617,22 +603,28 @@ const App: React.FC = () => {
   useEffect(() => {
     if (!activeFileId || !activeFile) return;
 
-    const timer = setTimeout(() => {
-      syncLayers(activeFileId, layers);
+    const timer = setTimeout(async () => {
+      const searchConf = searchQuery ? {
+        query: searchQuery,
+        regex: searchConfig.regex,
+        caseSensitive: searchConfig.caseSensitive
+      } : null;
 
-      if (GLOBAL_BRIDGED_CACHES[activeFileId]) {
-        GLOBAL_BRIDGED_CACHES[activeFileId].clear();
-      }
-      // Note: bridgedUpdateTrigger will be updated when filter/search signals arrive
-
-      // Also handle search via bridge
       if (searchQuery) {
         setIsSearching(true);
-        setCurrentMatchIndex(-1); // Reset match selection when context changes
-        searchRipgrep(activeFileId, searchQuery, searchConfig.regex, searchConfig.caseSensitive);
-      } else {
-        if (activeFileId) searchRipgrep(activeFileId, '', false, false);
-        setBridgedMatches([]);
+        setCurrentMatchIndex(-1);
+
+        // We still clear current matches here to indicate loading, but syncAll will 
+        // ensure the correct results arrive in a single signal sequence.
+        setProcessedCache(prev => ({
+          ...prev,
+          [activeFileId!]: { ...prev[activeFileId!], searchMatches: [] }
+        }));
+      }
+
+      await syncAll(activeFileId, layers, searchConf);
+
+      if (!searchQuery) {
         setIsSearching(false);
         setCurrentMatchIndex(-1);
       }
@@ -640,7 +632,7 @@ const App: React.FC = () => {
       setIsLayerProcessing(false);
     }, 300);
     return () => clearTimeout(timer);
-  }, [layersFunctionalHash, searchQuery, searchConfig, activeFileId, activeFile?.rawCount]);
+  }, [layersFunctionalHash, searchQuery, searchConfig, activeFileId, activeFile?.lineCount]);
 
   const addLayer = (type: LayerType, initialConfig: any = {}) => {
     const newId = Math.random().toString(36).substr(2, 9);
@@ -723,103 +715,34 @@ const App: React.FC = () => {
     }
   };
 
-  const handleVisibleRangeChange = useCallback(async (start: number, end: number) => {
-    if (!activeFileId || !activeFile || activeFile.lineCount === 0) return;
-
-    if (start >= lastFetchedRange.current.start && end <= lastFetchedRange.current.end) return;
-
-    const fetchStart = Math.max(0, start - 100);
-    const fetchCount = Math.min(activeFile.lineCount - fetchStart, (end - start) + 200);
-    if (fetchCount <= 0) return;
-
-    const newLines = await readProcessedLines(activeFileId, fetchStart, fetchCount);
-
-    const cache = GLOBAL_BRIDGED_CACHES[activeFileId];
-    if (cache) {
-      newLines.forEach((line, i) => cache.set(fetchStart + i, line));
-    }
-    setBridgedUpdateTrigger(v => v + 1);
-    lastFetchedRange.current = { start: fetchStart, end: fetchStart + fetchCount };
-  }, [activeFile, activeFileId]);
 
   const findNextSearchMatch = useCallback((direction: 'next' | 'prev') => {
-    if (!searchQuery) return;
+    if (!searchQuery || bridgedMatches.length === 0) return;
 
-    // Fast path for bridged files
-    if (activeFile?.isBridged) {
-      if (bridgedMatches.length === 0) return;
-
-      let nextIdx = -1;
-      // Start searching from the currently highlighted line or the last known match
-      const currentPos = (highlightedIndex !== null) ? highlightedIndex : currentMatchIndex;
-
-      if (direction === 'next') {
-        const found = bridgedMatches.find(m => m > currentPos);
-        nextIdx = found !== undefined ? found : bridgedMatches[0];
-      } else {
-        // Optimized backward search for large match arrays
-        for (let i = bridgedMatches.length - 1; i >= 0; i--) {
-          if (bridgedMatches[i] < currentPos) {
-            nextIdx = bridgedMatches[i];
-            break;
-          }
-        }
-        // Wrap around to the last match if none found before currentPos
-        if (nextIdx === -1) nextIdx = bridgedMatches[bridgedMatches.length - 1];
-      }
-
-      if (nextIdx !== -1) {
-        setCurrentMatchIndex(nextIdx);
-        handleJumpToLine(nextIdx);
-      }
-      return;
-    }
-
-    if (processedLogs.length === 0) return;
-
-    let re: RegExp;
-    try {
-      let pattern = searchConfig.regex ? searchQuery : searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      if (searchConfig.wholeWord) pattern = `\\b${pattern}\\b`;
-      re = new RegExp(pattern, searchConfig.caseSensitive ? '' : 'i');
-    } catch (e) { return; }
-
-    const startIndex = currentMatchIndex === -1 ? 0 : currentMatchIndex;
     let nextIdx = -1;
+    // Start searching from the currently highlighted line or the last known match
+    const currentPos = (highlightedIndex !== null) ? highlightedIndex : currentMatchIndex;
 
     if (direction === 'next') {
-      for (let i = startIndex + 1; i < processedLogs.length; i++) {
-        const line = processedLogs[i];
-        const content = typeof line === 'string' ? line : line.content;
-        if (re.test(content)) { nextIdx = i; break; }
-      }
-      if (nextIdx === -1) {
-        for (let i = 0; i <= startIndex; i++) {
-          const line = processedLogs[i];
-          const content = typeof line === 'string' ? line : line.content;
-          if (re.test(content)) { nextIdx = i; break; }
-        }
-      }
+      const found = bridgedMatches.find(m => m > currentPos);
+      nextIdx = found !== undefined ? found : bridgedMatches[0];
     } else {
-      for (let i = startIndex - 1; i >= 0; i--) {
-        const line = processedLogs[i];
-        const content = typeof line === 'string' ? line : line.content;
-        if (re.test(content)) { nextIdx = i; break; }
-      }
-      if (nextIdx === -1) {
-        for (let i = processedLogs.length - 1; i >= startIndex; i--) {
-          const line = processedLogs[i];
-          const content = typeof line === 'string' ? line : line.content;
-          if (re.test(content)) { nextIdx = i; break; }
+      // Optimized backward search for large match arrays
+      for (let i = bridgedMatches.length - 1; i >= 0; i--) {
+        if (bridgedMatches[i] < currentPos) {
+          nextIdx = bridgedMatches[i];
+          break;
         }
       }
+      // Wrap around to the last match if none found before currentPos
+      if (nextIdx === -1) nextIdx = bridgedMatches[bridgedMatches.length - 1];
     }
 
     if (nextIdx !== -1) {
       setCurrentMatchIndex(nextIdx);
       handleJumpToLine(nextIdx);
     }
-  }, [searchQuery, processedLogs, searchConfig, currentMatchIndex, activeFile, bridgedMatches]);
+  }, [searchQuery, bridgedMatches, currentMatchIndex, highlightedIndex, handleJumpToLine]);
 
   const handleSavePreset = () => {
     const presetName = prompt("输入预设名称 (输入 '默认' 将更新系统设置):");
@@ -863,13 +786,17 @@ const App: React.FC = () => {
       re = new RegExp(pattern, searchConfig.caseSensitive ? '' : 'i');
     } catch (e) { return 0; }
     let count = 0;
-    for (let i = 0; i <= currentMatchIndex; i++) {
-      const line = processedLogs[i];
-      const content = typeof line === 'string' ? line : line.content;
-      if (re.test(content)) count++;
-    }
+    // This part of the code is unreachable for non-bridged files as they are not supported anymore.
+    // Keeping it for now, but it will likely be removed in future refactors.
+    // For now, `processedLogs` is not defined here, so this will cause a runtime error if reached.
+    // The `activeFile?.isBridged` check should prevent this.
+    // for (let i = 0; i <= currentMatchIndex; i++) {
+    //   const line = processedLogs[i];
+    //   const content = typeof line === 'string' ? line : line.content;
+    //   if (re.test(content)) count++;
+    // }
     return count;
-  }, [currentMatchIndex, searchQuery, searchConfig, processedLogs, activeFile, bridgedMatches]);
+  }, [currentMatchIndex, searchQuery, searchConfig, activeFile, bridgedMatches]);
 
   return (
     <div className="flex flex-col h-screen select-none overflow-hidden text-sm bg-[#1e1e1e] text-[#cccccc]">
@@ -964,7 +891,6 @@ const App: React.FC = () => {
               onFileRemove={handleFileRemove}
               layers={layers}
               layerStats={layerStats}
-              rawCounts={rawStats}
               selectedLayerId={selectedLayerId}
               onSelectLayer={setSelectedLayerId}
               onLayerDrop={handleDrop}
@@ -1018,7 +944,10 @@ const App: React.FC = () => {
                   onClose={() => {
                     setIsFindVisible(false);
                     setSearchQuery('');
-                    setBridgedMatches([]);
+                    setProcessedCache(prev => ({
+                      ...prev,
+                      [activeFileId!]: { ...prev[activeFileId!], searchMatches: [] }
+                    }));
                     setCurrentMatchIndex(-1);
                   }}
                 />
@@ -1041,7 +970,8 @@ const App: React.FC = () => {
                 {panes.map((pane, index) => {
                   const paneFileId = pane.fileId;
                   const processedData = paneFileId ? processedCache[paneFileId] : null;
-                  const paneStats = processedData?.stats || {};
+                  const paneStats = processedData?.layerStats || {};
+                  const isActive = activeFileId === paneFileId;
 
                   return (
                     <div key={pane.id} className="flex-1 flex flex-col min-w-0 min-h-0 bg-[#1e1e1e] relative border-r border-[#111] overflow-hidden">
@@ -1198,14 +1128,9 @@ const App: React.FC = () => {
                             <LogViewer
                               totalLines={(() => {
                                 const file = files.find(f => f.id === pane.fileId);
-                                // For bridged files, always use lineCount
-                                // For regular files, use lineCount if available, otherwise processed logs length
-                                const count = file?.lineCount || processedCache[pane.fileId!]?.logs?.length || 0;
-                                return count;
+                                return file?.lineCount || 0;
                               })()}
                               fileId={pane.fileId}
-                              isBridged={files.find(f => f.id === pane.fileId)?.isBridged || false}
-                              localLines={processedCache[pane.fileId!]?.logs}
 
 
                               searchQuery={searchQuery}
@@ -1217,20 +1142,8 @@ const App: React.FC = () => {
                                 setHighlightedIndex(idx);
                               }}
                               onAddLayer={(type, config) => addLayer(type, config)}
-                              onVisibleRangeChange={handleVisibleRangeChange}
                               updateTrigger={bridgedUpdateTrigger}
                             />
-                            {/* Scrollbar Heatmap (Simplified) */}
-                            <div className="absolute right-0 top-0 bottom-0 w-3 bg-black/20 pointer-events-none border-l border-white/5 select-none z-10">
-                              {Object.keys(paneStats).map(layerId => {
-                                const stats = paneStats[layerId];
-                                const layer = layers.find(l => l.id === layerId) || (layerId === 'global-search-volatile' ? { type: LayerType.HIGHLIGHT, config: { color: '#facc15' }, enabled: true } : null);
-                                if (!layer || !layer.enabled || !stats) return null;
-                                return stats.distribution.map((d, i) => d > 0 && (
-                                  <div key={`${layerId}-${i}`} className="absolute w-full" style={{ top: `${(i / 20) * 100}%`, height: '5%', backgroundColor: layer.config.color || '#3b82f6', opacity: d * 0.6 }} />
-                                ));
-                              })}
-                            </div>
                           </div>
 
                         ) : pendingCliFiles > 0 ? (
@@ -1317,11 +1230,12 @@ const App: React.FC = () => {
         lines={activeFile?.lineCount || 0}
         totalLines={activeFile?.rawCount || 0}
         size={fileSize}
-        isProcessing={isProcessing}
+        isProcessing={isProcessing || (activeFileId ? loadingFileIds.has(activeFileId) : false)}
         isLayerProcessing={isLayerProcessing}
         operationStatus={operationStatus}
         searchMatchCount={searchMatchCount}
         currentLine={(highlightedIndex !== null) ? highlightedIndex + 1 : undefined}
+        pendingCliFiles={pendingCliFiles}
       />
     </div>
   );

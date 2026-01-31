@@ -1,7 +1,8 @@
 import sys
 import os
-from PyQt6.QtCore import QUrl, QObject, pyqtSlot, pyqtSignal
+from PyQt6.QtCore import QUrl, QObject, pyqtSlot, pyqtSignal, QSize
 from PyQt6.QtWidgets import QApplication, QMainWindow
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineSettings, QWebEnginePage
 from PyQt6.QtWebChannel import QWebChannel
@@ -17,10 +18,6 @@ class Bridge(QObject):
     
     def __init__(self):
         super().__init__()
-
-    @pyqtSlot(str, result=str)
-    def greet(self, name):
-        return f"Hello, {name}! (from Python)"
 
     @pyqtSlot(result=str)
     def get_platform(self):
@@ -47,20 +44,8 @@ class CustomWebView(QWebEngineView):
         urls = event.mimeData().urls()
         if urls:
             window = self.window()
-            if hasattr(window, 'file_bridge'):
-                for url in urls:
-                    path = url.toLocalFile()
-                    if os.path.isdir(path):
-                        # Recursive folder discovery
-                        for root, dirs, files in os.walk(path):
-                            for file in files:
-                                if file.lower().endswith(('.log', '.txt', '.json')) or '.' not in file:
-                                    full_path = os.path.join(root, file)
-                                    file_id = f"dropped-{int(os.path.getmtime(full_path))}-{os.path.getsize(full_path)}"
-                                    window.file_bridge.open_file(file_id, full_path)
-                    elif os.path.isfile(path):
-                        file_id = f"dropped-{int(os.path.getmtime(path))}-{os.path.getsize(path)}"
-                        window.file_bridge.open_file(file_id, path)
+            if hasattr(window, 'handle_dropped_urls'):
+                window.handle_dropped_urls(urls)
 
 
 class MainWindow(QMainWindow):
@@ -68,6 +53,11 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("LogLayer")
         self.resize(1200, 800)
+        
+        # Set window icon
+        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icon.png")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
         os.environ['QTWEBENGINE_REMOTE_DEBUGGING'] = '12345'
 
         self.browser = CustomWebView(self)
@@ -92,33 +82,64 @@ class MainWindow(QMainWindow):
         # Load the React app from Vite dev server
         self.browser.setUrl(QUrl("http://localhost:3000"))
 
-        # Print UserAgent for debugging
-        print(f"PyQt Browser UserAgent: {self.browser.page().profile().httpUserAgent()}")
+        # Pending CLI paths
+        self.pending_cli_paths = []
 
+    def load_cli_paths(self, paths):
+        self.pending_cli_paths = paths
+        self.file_bridge.frontendReady.connect(self._on_frontend_ready)
 
+    def _on_frontend_ready(self):
+        if not self.pending_cli_paths:
+            return
 
-    def dragEnterEvent(self, event):
-        if event.mimeData().hasUrls():
-            event.accept()
-        else:
-            event.ignore()
+        pending_files = []
+        for path in self.pending_cli_paths:
+            abs_path = os.path.abspath(path)
+            if os.path.isdir(abs_path):
+                for root, dirs, files in os.walk(abs_path):
+                    for file in files:
+                        if file.lower().endswith(('.log', '.txt', '.json')) or '.' not in file:
+                            pending_files.append(os.path.join(root, file))
+            elif os.path.isfile(abs_path):
+                pending_files.append(abs_path)
+        
+        if pending_files:
+            # Send count first so frontend can show loading state
+            self.file_bridge.pendingFilesCount.emit(len(pending_files))
+            
+            # Open files
+            for full_path in pending_files:
+                self._open_single_file(full_path, "cli")
+        
+        # Clear paths so we don't load them again if ready is called again
+        self.pending_cli_paths = []
 
-    def dropEvent(self, event):
-        urls = event.mimeData().urls()
-        if urls:
-            for url in urls:
-                path = url.toLocalFile()
-                if os.path.isdir(path):
-                    # Recursive folder discovery
-                    for root, dirs, files in os.walk(path):
-                        for file in files:
-                            if file.lower().endswith(('.log', '.txt', '.json')) or '.' not in file:
-                                full_path = os.path.join(root, file)
-                                file_id = f"dropped-{int(os.path.getmtime(full_path))}-{os.path.getsize(full_path)}"
-                                self.file_bridge.open_file(file_id, full_path)
-                elif os.path.isfile(path):
-                    file_id = f"dropped-{int(os.path.getmtime(path))}-{os.path.getsize(path)}"
-                    self.file_bridge.open_file(file_id, path)
+    def handle_dropped_urls(self, urls):
+        for url in urls:
+            path = url.toLocalFile()
+            abs_path = os.path.abspath(path)
+            if os.path.isdir(abs_path):
+                # Use the recursive discovery logic from bridge if possible, 
+                # but here we need to call open_file for each.
+                for root, dirs, files in os.walk(abs_path):
+                    for file in files:
+                        if file.lower().endswith(('.log', '.txt', '.json')) or '.' not in file:
+                            full_path = os.path.join(root, file)
+                            self._open_single_file(full_path, "dropped")
+            elif os.path.isfile(abs_path):
+                self._open_single_file(abs_path, "dropped")
+
+    def _open_single_file(self, path, prefix):
+        try:
+            stats = os.stat(path)
+            file_id = f"{prefix}-{int(stats.st_mtime)}-{stats.st_size}"
+            self.file_bridge.open_file(file_id, path)
+        except Exception as e:
+            print(f"Error opening {path}: {e}")
+
+    # The following are no longer needed on MainWindow if CustomWebView handles them,
+    # but we keep handle_dropped_urls as a shared helper.
 
 if __name__ == "__main__":
     import argparse
@@ -132,43 +153,22 @@ if __name__ == "__main__":
     qt_argv = [sys.argv[0]] + qt_args
     
     app = QApplication(qt_argv)
+    
+    # 设置程序图标 (Windows 任务栏也生效)
+    icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icon.png")
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
+        # Windows: 让任务栏图标正确显示 (避免被合并到 python 进程)
+        if sys.platform == "win32":
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Antigravity.LogLayer.0.1")
+            
     window = MainWindow()
     window.setAcceptDrops(True)
     window.show()
     
     # 延迟打开命令行传入的文件/文件夹
     if args.paths:
-        from PyQt6.QtCore import QTimer
-        
-        # 先统计待打开的文件
-        pending_files = []
-        for path in args.paths:
-            abs_path = os.path.abspath(path)
-            
-            if os.path.isdir(abs_path):
-                for root, dirs, files in os.walk(abs_path):
-                    for file in files:
-                        if file.lower().endswith(('.log', '.txt', '.json')) or '.' not in file:
-                            full_path = os.path.join(root, file)
-                            pending_files.append(full_path)
-            elif os.path.isfile(abs_path):
-                pending_files.append(abs_path)
-            else:
-                print(f"Warning: Path not found: {abs_path}")
-        
-        if pending_files:
-            # 发送待加载文件数量信号
-            def notify_pending():
-                window.file_bridge.pendingFilesCount.emit(len(pending_files))
-            
-            def open_cli_files():
-                for full_path in pending_files:
-                    file_id = f"cli-{int(os.path.getmtime(full_path))}-{os.path.getsize(full_path)}"
-                    window.file_bridge.open_file(file_id, full_path)
-            
-            # 先通知前端有待加载文件（500ms 后，让界面先渲染）
-            QTimer.singleShot(500, notify_pending)
-            # 再延迟打开文件（1500ms 后，等 WebChannel 完全初始化）
-            QTimer.singleShot(1500, open_cli_files)
+        window.load_cli_paths(args.paths)
     
     sys.exit(app.exec())

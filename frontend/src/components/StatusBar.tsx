@@ -10,9 +10,10 @@ interface StatusBarProps {
   operationStatus?: { op: string, progress: number, error?: string } | null;
   searchMatchCount?: number;
   currentLine?: number;
+  pendingCliFiles?: number;
 }
 
-export const StatusBar: React.FC<StatusBarProps> = ({ lines, totalLines, size, isProcessing, isLayerProcessing, operationStatus, searchMatchCount, currentLine }) => {
+export const StatusBar: React.FC<StatusBarProps> = ({ lines, totalLines, size, isProcessing, isLayerProcessing, operationStatus, searchMatchCount, currentLine, pendingCliFiles }) => {
   const formatSize = (bytes: number) => {
     if (bytes === 0) return '0 B';
     const k = 1024;
@@ -32,6 +33,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({ lines, totalLines, size, i
     if (isLayerProcessing && isProcessing) return '正在并行处理数据...';
     if (isProcessing) return '正在加载流式日志...';
     if (isLayerProcessing) return '正在刷新处理管道...';
+    if (pendingCliFiles && pendingCliFiles > 0) return `正在打开文件... (${pendingCliFiles} 个待处理)`;
     return '就绪';
   };
 

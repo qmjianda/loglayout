@@ -68,3 +68,13 @@ graph TD
 - **Interactive Placeholder**: The central "Drag a file here to open" area is now clickable and serves as a primary file selector.
 - **Consistency**: Unified the logic for drag-and-drop and button-based file opening for both files and folders by moving the discovery logic to the backend.
 - **File Loading Skeleton**: Added an elegant skeleton UI loading indicator that appears when switching between files. Features a shimmer animation effect and deterministically-generated skeleton lines to provide visual feedback during the loading delay.
+- **Improved File Selection**: Fixed a bug where clicking an already active file in the sidebar caused redundant re-indexing and UI flickers. Added a check for the loaded state and current active state before triggering backend `open_file`.
+- **Startup Optimization**: Removed a redundant `open_file` call from the `fileLoaded` signal handler in the frontend, preventing double-loading of CLI files.
+- **Codebase Cleanup**: Removed legacy non-bridged code paths from frontend. Deleted unused `processors` directory and redundant test scripts.
+- **Subprocess Management**: Enhanced `StatsWorker` in backend to properly track and terminate all piped `rg` processes on stop.
+- **Empty File Support**: Fixed a bug where empty files were reported as having 1 line.
+- **Architecture Simplification**: Removed redundant global caching in `App.tsx`, consolidating line fetching into `LogViewer`.
+- **CLI Consistency**: Unified file ID generation logic across CLI, drag-and-drop, and native selection.
+- **Startup Reliability (2026-01-31)**: Optimized the application initialization by replacing hardcoded `QTimer` delays for CLI file loading with a formal handshake protocol. The frontend now signals its readiness via `fileBridge.ready()`, triggering the backend to safely emit pending file operations. This eliminates race conditions and ensures a snappy, reliable startup experience across different system performances.
+- **Loading Status Persistence**: Fixed a UI issue where the status bar would prematurely show "Ready" while files were still being opened or indexed. Improved the state management to track pending CLI files and per-file loading states, ensuring the status bar provides accurate visual feedback during all stages of data ingestion.
+- **Visual Identity**: Generated and integrated a premium, modern application icon. Implemented native Windows taskbar support by setting a unique `AppUserModelID`, ensuring the icon appears distinctly and elegantly in the OS shell.

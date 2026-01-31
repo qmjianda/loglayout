@@ -6,7 +6,6 @@ import * as Configs from './layer-configs';
 interface LayersPanelProps {
   layers: LogLayer[];
   stats: Record<string, { count: number; distribution: number[] }>;
-  rawCounts?: Record<string, number[]>;
   selectedId: string | null;
   onSelect: (id: string) => void;
   onRemove: (id: string) => void;
@@ -127,9 +126,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
           }
         }}
         onDrop={(e) => handleDropLocal(e, layer.id)}
-        onMouseEnter={() => !isFolder && setHoveredLayerId(layer.id)}
         onMouseLeave={() => setHoveredLayerId(null)}
-        onMouseMove={(e) => setTooltipPos({ x: e.clientX + 15, y: e.clientY + 10 })}
         onMouseDown={(e) => {
           const target = e.target as HTMLElement;
           if (target.closest('.no-drag')) return;
@@ -213,7 +210,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
 
         {isSelected && !isFolder && !layer.isCollapsed && ConfigComponent && (
           <div
-            className="px-3 pb-3 space-y-3 border-t border-black/10 pt-3 bg-black/5 shadow-inner"
+            className="px-3 pb-1 space-y-3 border-t border-black/10 pt-3 bg-black/5 shadow-inner"
             onMouseEnter={() => setIsInputActive(true)}
             onMouseLeave={() => setIsInputActive(false)}
             onMouseDown={e => e.stopPropagation()}
@@ -227,13 +224,6 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
           </div>
         )}
 
-        {!isFolder && stats[layer.id] && (
-          <div className="h-[2px] w-full flex space-x-[1px] relative overflow-hidden shrink-0">
-            {stats[layer.id].distribution.map((v, i) => (
-              <div key={i} className="flex-1" style={{ backgroundColor: layerColor, opacity: Math.max(0.05, v * 0.8) }} />
-            ))}
-          </div>
-        )}
       </div>
     );
   };
@@ -249,35 +239,9 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
       ));
   };
 
-  const StatsTooltip = () => {
-    if (!hoveredLayerId || !stats[hoveredLayerId]) return null;
-    const layer = layers.find(l => l.id === hoveredLayerId);
-    if (!layer) return null;
-    const layerStats = stats[hoveredLayerId];
-    const layerColor = layer.config.color || '#3b82f6';
-
-    return (
-      <div
-        style={{ position: 'fixed', left: tooltipPos.x, top: tooltipPos.y, zIndex: 1000, pointerEvents: 'none' }}
-        className="bg-[#2d2d30] border border-[#454545] shadow-2xl rounded p-3 w-48 text-[11px] text-[#cccccc] flex flex-col space-y-2 backdrop-blur-md bg-opacity-95"
-      >
-        <div className="flex items-center justify-between border-b border-white/5 pb-1">
-          <span className="font-bold text-gray-400 truncate">{layer.name}</span>
-          <span className="text-blue-400 font-mono">{layerStats.count.toLocaleString()}</span>
-        </div>
-        <div className="flex items-end space-x-[1px] h-12 bg-black/20 p-1 rounded">
-          {layerStats.distribution.map((v, i) => (
-            <div key={i} className="flex-1" style={{ height: `${Math.max(4, v * 100)}%`, backgroundColor: layerColor, opacity: Math.max(0.2, v) }} />
-          ))}
-        </div>
-      </div>
-    );
-  };
-
   return (
-    <div className="flex flex-col pb-10">
+    <div className="flex flex-col pb-0">
       {renderRecursive()}
-      <StatsTooltip />
     </div>
   );
 };

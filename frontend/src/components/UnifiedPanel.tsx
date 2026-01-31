@@ -24,7 +24,6 @@ interface UnifiedPanelProps {
     // 图层相关
     layers: LogLayer[];
     layerStats: Record<string, { count: number; distribution: number[] }>;
-    rawCounts: Record<string, number[]>;
     selectedLayerId: string | null;
     onSelectLayer: (id: string | null) => void;
     onLayerDrop: (draggedId: string, targetId: string | null, position: 'inside' | 'before' | 'after') => void;
@@ -60,7 +59,6 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
     onFileRemove,
     layers, // Note: This prop now comes from activeFile layers but we rely on files.layers for tree
     layerStats,
-    rawCounts,
     selectedLayerId,
     onSelectLayer,
     onLayerDrop,
@@ -205,7 +203,6 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
                                                         <LayersPanel
                                                             layers={file.layers} // Use File's layers
                                                             stats={isActive ? layerStats : {}} // Only show stats for active file
-                                                            rawCounts={isActive ? rawCounts : {}}
                                                             selectedId={selectedLayerId}
                                                             onSelect={onSelectLayer}
                                                             onDrop={onLayerDrop} // Warning: drag drop might cross files if not careful, but onLayerDrop in App operates on activeFileId.

@@ -5,10 +5,10 @@ declare const QWebChannel: any;
 export interface FileBridgeAPI {
     // File operations
     open_file: (fileId: string, path: string) => Promise<boolean>;
-    select_file: () => Promise<string>;
     select_files: () => Promise<string>;
     select_folder: () => Promise<string>;
     list_logs_in_folder: (folderPath: string) => Promise<string>;
+    ready: () => Promise<void>;
 
 
     close_file: (fileId: string) => Promise<void>;
@@ -18,6 +18,7 @@ export interface FileBridgeAPI {
 
     // Layer and pipeline management
     sync_layers: (fileId: string, layersJson: string) => Promise<boolean>;
+    sync_all: (fileId: string, layersJson: string, searchJson: string) => Promise<boolean>;
 
     // Search
     search_ripgrep: (fileId: string, query: string, regex: boolean, caseSensitive: boolean) => Promise<boolean>;
@@ -26,11 +27,8 @@ export interface FileBridgeAPI {
     fileLoaded: {
         connect: (callback: (fileId: string, payloadJson: string) => void) => void;
     };
-    filterFinished: {
-        connect: (callback: (fileId: string, newTotal: number) => void) => void;
-    };
-    searchFinished: {
-        connect: (callback: (fileId: string, matchesJson: string) => void) => void;
+    pipelineFinished: {
+        connect: (callback: (fileId: string, newTotal: number, matchesJson: string) => void) => void;
     };
     statsFinished: {
         connect: (callback: (fileId: string, statsJson: string) => void) => void;
@@ -47,6 +45,9 @@ export interface FileBridgeAPI {
     };
     pendingFilesCount: {
         connect: (callback: (count: number) => void) => void;
+    };
+    frontendReady: {
+        connect: (callback: () => void) => void;
     };
 }
 
@@ -73,6 +74,15 @@ export async function syncLayers(fileId: string, layers: any[]): Promise<void> {
     }
 }
 
+export async function syncAll(fileId: string, layers: any[], search: any): Promise<void> {
+    if (!fileBridge) return;
+    try {
+        await fileBridge.sync_all(fileId, JSON.stringify(layers), JSON.stringify(search));
+    } catch (e) {
+        console.error(`Failed to sync all for ${fileId}:`, e);
+    }
+}
+
 export async function searchRipgrep(
     fileId: string,
     query: string,
@@ -96,11 +106,6 @@ export async function openFile(fileId: string, path: string): Promise<boolean> {
 export async function closeFile(fileId: string): Promise<void> {
     if (!fileBridge) return;
     return fileBridge.close_file(fileId);
-}
-
-export async function selectFile(): Promise<string> {
-    if (!fileBridge) return "";
-    return fileBridge.select_file();
 }
 
 export async function selectFiles(): Promise<string[]> {
