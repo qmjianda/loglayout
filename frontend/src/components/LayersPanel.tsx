@@ -13,6 +13,7 @@ interface LayersPanelProps {
   onUpdate: (id: string, update: any) => void;
   onDrop: (draggedId: string, targetId: string | null, position: 'inside' | 'before' | 'after') => void;
   onJumpToLine?: (index: number) => void;
+  isReadOnly?: boolean;
 }
 
 const CONFIG_COMPONENTS: Partial<Record<LayerType, React.FC<any>>> = {
@@ -25,7 +26,7 @@ const CONFIG_COMPONENTS: Partial<Record<LayerType, React.FC<any>>> = {
 };
 
 export const LayersPanel: React.FC<LayersPanelProps> = ({
-  layers, stats, selectedId, onSelect, onRemove, onToggle, onUpdate, onDrop
+  layers, stats, selectedId, onSelect, onRemove, onToggle, onUpdate, onDrop, isReadOnly = false
 }) => {
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [draggedLayerId, setDraggedLayerId] = useState<string | null>(null);
@@ -115,36 +116,33 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
     return (
       <div
         key={layer.id}
-        draggable={!isEditing && !isInputActive}
-        onDragStart={(e) => handleDragStart(e, layer.id)}
+        draggable={!isEditing && !isInputActive && !isReadOnly}
+        onDragStart={(e) => isReadOnly ? e.preventDefault() : handleDragStart(e, layer.id)}
         onDragEnd={handleDragEnd}
-        onDragOver={(e) => handleDragOver(e, layer.id, layer.type)}
+        onDragOver={(e) => isReadOnly ? null : handleDragOver(e, layer.id, layer.type)}
         onDragLeave={(e) => {
           if (!e.currentTarget.contains(e.relatedTarget as Node)) {
             setDragOverId(null);
             setDropPosition(null);
           }
         }}
-        onDrop={(e) => handleDropLocal(e, layer.id)}
+        onDrop={(e) => isReadOnly ? null : handleDropLocal(e, layer.id)}
         onMouseLeave={() => setHoveredLayerId(null)}
-        onMouseDown={(e) => {
-          const target = e.target as HTMLElement;
-          if (target.closest('.no-drag')) return;
-          if (target.tagName !== 'INPUT' && target.tagName !== 'BUTTON' && !target.closest('button')) {
-            onSelect(layer.id);
-          }
-        }}
         onClick={(e) => {
+          if (isReadOnly) return;
           const target = e.target as HTMLElement;
           if (target.tagName === 'INPUT' || target.tagName === 'BUTTON' || target.closest('button')) return;
-          // Toggle collapse
+          if (target.closest('.no-drag')) return;
+          // Select the layer AND toggle collapse
+          onSelect(layer.id);
           onUpdate(layer.id, { isCollapsed: !layer.isCollapsed });
         }}
-        onDoubleClick={() => setEditingId(layer.id)}
+        onDoubleClick={() => !isReadOnly && setEditingId(layer.id)}
         className={`flex flex-col border-b border-[#111] relative group transition-all duration-200 overflow-hidden
-          ${isSelected ? 'bg-[#37373d]' : 'bg-[#252526] hover:bg-[#2d2d30]'}
+          bg-[#252526] hover:bg-[#2d2d30]
           ${isDragOver && dropPosition === 'inside' ? 'bg-blue-500/15 drop-target-inside ring-1 ring-blue-500/50 ring-inset' : ''}
-          ${effectivelyDisabled ? 'opacity-40' : ''}`}
+          ${effectivelyDisabled ? 'opacity-40' : ''}
+          ${isReadOnly ? 'pointer-events-none opacity-60' : 'cursor-pointer'}`}
       >
         {isDragOver && dropPosition === 'before' && (
           <div className="absolute top-0 left-0 right-0 h-[2px] bg-blue-500 z-50 pointer-events-none shadow-[0_0_8px_rgba(59,130,246,0.8)] flex items-center justify-center">
@@ -158,11 +156,9 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
         )}
 
         <div className={`flex items-center py-1 min-h-[32px] overflow-hidden`} style={{ paddingLeft: `${depth * 10 + 2}px` }}>
-          <div
-            className={`w-6 h-6 flex items-center justify-center shrink-0 cursor-pointer hover:bg-white/5 rounded transition-transform ${layer.isCollapsed ? '-rotate-90' : ''}`}
-            onClick={(e) => { e.stopPropagation(); onUpdate(layer.id, { isCollapsed: !layer.isCollapsed }); }}
-          >
-            <svg className="w-2.5 h-2.5 text-gray-500" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" /></svg>
+          {/* Collapse arrow - visual indicator only */}
+          <div className={`w-6 h-6 flex items-center justify-center shrink-0 text-gray-500 transition-transform ${layer.isCollapsed ? '-rotate-90' : ''}`}>
+            <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" /></svg>
           </div>
 
           <div

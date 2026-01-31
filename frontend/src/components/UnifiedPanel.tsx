@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { LogLayer, LayerType, LayerPreset } from '../types';
 import { LayersPanel } from './LayersPanel';
 import { FileTree } from './FileTree';
@@ -97,10 +97,33 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
     // Track expanded files for tree view
     const [expandedFiles, setExpandedFiles] = useState<Record<string, boolean>>({});
 
-    // Auto-expand active file when it changes
+    // Add layer menu state
+    const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
+    const menuRef = useRef<HTMLDivElement>(null);
+
+    // Click outside to close menu
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+                setActiveMenuId(null);
+            }
+        };
+        if (activeMenuId) {
+            document.addEventListener('mousedown', handleClickOutside);
+        }
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [activeMenuId]);
+
+    // Auto-expand active file ONLY when first opened (not interacted with yet)
+    // This effect only sets to true if the file has never been toggled (undefined state)
+    const prevActiveFileIdRef = useRef<string | null>(null);
     React.useEffect(() => {
-        if (activeFileId && expandedFiles[activeFileId] === undefined) {
-            setExpandedFiles(prev => ({ ...prev, [activeFileId]: true }));
+        // Only auto-expand when switching TO a different file that hasn't been toggled
+        if (activeFileId && activeFileId !== prevActiveFileIdRef.current) {
+            if (expandedFiles[activeFileId] === undefined) {
+                setExpandedFiles(prev => ({ ...prev, [activeFileId]: true }));
+            }
+            prevActiveFileIdRef.current = activeFileId;
         }
     }, [activeFileId]);
 
@@ -120,6 +143,64 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
         const i = Math.floor(Math.log(bytes) / Math.log(k));
         return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
     };
+
+    // Layer type definitions for dropdown menu
+    const layerTypes = [
+        { type: LayerType.FILTER, label: '过滤', icon: <svg className="w-3.5 h-3.5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M3 4h18l-7 9v6l-4 2V13L3 4z" strokeWidth="2" /></svg> },
+        { type: LayerType.HIGHLIGHT, label: '高亮', icon: <svg className="w-3.5 h-3.5 text-yellow-400" fill="currentColor" viewBox="0 0 24 24"><path d="M12 21a9 9 0 110-18 9 9 0 010 18z" /></svg> },
+        { type: LayerType.LEVEL, label: '等级', icon: <svg className="w-3.5 h-3.5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg> },
+        { type: LayerType.TIME_RANGE, label: '时间', icon: <svg className="w-3.5 h-3.5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> },
+        { type: LayerType.RANGE, label: '范围', icon: <svg className="w-3.5 h-3.5 text-teal-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2.5" d="M7 8l-4 4 4 4M17 8l4 4-4 4M13 4l-2 16" /></svg> },
+        { type: LayerType.TRANSFORM, label: '转换', icon: <svg className="w-3.5 h-3.5 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2.5" d="M4 4h16v16H4V4zm4 4h8v8H8V8z" /></svg> },
+    ];
+
+    // Render dropdown menu for adding layers
+    const renderAddMenu = (fileId: string) => (
+        <div
+            ref={menuRef}
+            className="absolute right-0 top-full mt-1 w-40 bg-[#252526] border border-[#454545] shadow-2xl rounded py-1 z-[100] animate-in fade-in zoom-in-95 duration-100"
+        >
+            <div className="px-3 py-1.5 text-[9px] uppercase font-black text-gray-500 tracking-wider bg-[#2d2d2d] border-b border-[#333]">基础图层</div>
+            {layerTypes.map(t => (
+                <button
+                    key={t.type}
+                    onMouseDown={(e) => {
+                        e.stopPropagation();
+                        onAddLayer(t.type);
+                        setActiveMenuId(null);
+                        setExpandedFiles(prev => ({ ...prev, [fileId]: true }));
+                    }}
+                    className="w-full flex items-center px-3 py-1.5 text-[11px] text-gray-300 hover:bg-blue-600 hover:text-white transition-colors"
+                >
+                    <span className="mr-3 w-4 flex justify-center shrink-0">{t.icon}</span>
+                    <span className="truncate text-left">{t.label}</span>
+                </button>
+            ))}
+
+            {presets.length > 0 && (
+                <>
+                    <div className="px-3 py-1.5 text-[9px] uppercase font-black text-gray-500 tracking-wider bg-[#2d2d2d] border-y border-[#333] mt-1">预设库</div>
+                    {presets.map(p => (
+                        <button
+                            key={p.id}
+                            onMouseDown={(e) => {
+                                e.stopPropagation();
+                                onPresetApply(p);
+                                setActiveMenuId(null);
+                            }}
+                            className="w-full flex items-center px-3 py-1.5 text-[11px] text-gray-300 hover:bg-blue-600 hover:text-white transition-colors group"
+                            title={p.name}
+                        >
+                            <span className="mr-3 w-4 flex justify-center shrink-0">
+                                <svg className="w-3.5 h-3.5 opacity-70 group-hover:opacity-100" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
+                            </span>
+                            <span className="truncate text-left flex-1">{p.name}</span>
+                        </button>
+                    ))}
+                </>
+            )}
+        </div>
+    );
 
     return (
         <div className="flex-1 flex flex-col overflow-hidden">
@@ -162,39 +243,106 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
                             <div className="p-4 text-center text-[10px] text-gray-500 italic">暂无文件 (从资源管理器中选取)</div>
                         ) : (
                             files.map(file => {
-                                const isExpanded = expandedFiles[file.id] !== false; // Default to true if not explicitly false
+                                const isExpanded = expandedFiles[file.id] !== false;
                                 const isActive = file.id === activeFileId;
+                                const hasLayers = file.layers && file.layers.length > 0;
 
                                 return (
                                     <div key={file.id} className="flex flex-col border-b border-[#111]">
+                                        {/* File Header Row - Click to activate AND toggle expand */}
                                         <div
-                                            className={`flex items-center px-2 py-1.5 cursor-pointer select-none group transition-colors relative ${isActive ? 'bg-[#37373d]' : 'hover:bg-[#2a2d2e]'}`}
-                                            onClick={(e) => { onFileActivate(file.id); toggleFile(file.id, e); }}
+                                            className={`flex items-center py-1 px-2 cursor-pointer select-none group transition-colors relative ${isActive ? 'bg-[#37373d] text-blue-400' : 'hover:bg-[#2a2d2e] text-gray-400'}`}
+                                            onClick={() => {
+                                                onFileActivate(file.id);
+                                                // Toggle expand: if undefined (default expanded) or true → false, if false → true
+                                                setExpandedFiles(prev => {
+                                                    const currentlyExpanded = prev[file.id] !== false;
+                                                    return { ...prev, [file.id]: !currentlyExpanded };
+                                                });
+                                            }}
                                         >
-                                            {isActive && <div className="absolute left-0 top-0 bottom-0 w-[2.5px] bg-[#007acc]" />}
-                                            <div className="w-4 h-4 mr-1 flex items-center justify-center hover:bg-white/10 rounded" onClick={(e) => toggleFile(file.id, e)}>
-                                                <svg className={`w-3 h-3 text-gray-500 transition-transform ${isExpanded ? 'rotate-90' : ''}`} fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" /></svg>
+                                            {/* Expand/Collapse Arrow - Visual indicator only */}
+                                            <div className={`w-4 h-4 mr-1 shrink-0 flex items-center justify-center text-gray-500 transition-transform ${isExpanded ? 'rotate-90' : ''}`}>
+                                                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" /></svg>
                                             </div>
-                                            <div className="flex-1 min-w-0 pr-2">
-                                                <div className={`text-[11px] truncate ${isActive ? 'text-gray-100 font-medium' : 'text-gray-400'}`}>{file.name}</div>
+
+                                            {/* File Icon */}
+                                            <div className="mr-2 shrink-0">
+                                                <svg className="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
                                             </div>
-                                            <button onClick={(e) => { e.stopPropagation(); onFileRemove(file.id); }} className="opacity-0 group-hover:opacity-100 p-0.5 text-gray-500 hover:text-red-400">
-                                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
-                                            </button>
+
+                                            {/* File Name */}
+                                            <span className={`text-xs truncate flex-1 ${isActive ? 'text-white font-medium' : ''}`}>{file.name}</span>
+
+                                            {/* Action Buttons - Always visible for active file, hover for others */}
+                                            {/* Use pointer-events-none when hidden to allow clicks to pass through */}
+                                            <div className={`flex items-center space-x-0.5 transition-opacity ${isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto'}`}>
+                                                {isActive && (
+                                                    <>
+                                                        {/* Save as Preset */}
+                                                        <button
+                                                            onClick={(e) => { e.stopPropagation(); onPresetSave(); }}
+                                                            className="p-1 hover:bg-white/10 rounded transition-colors text-gray-500 hover:text-white"
+                                                            title="保存为预设"
+                                                        >
+                                                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" /></svg>
+                                                        </button>
+                                                        {/* Add Folder */}
+                                                        <button
+                                                            onClick={(e) => { e.stopPropagation(); onAddLayer(LayerType.FOLDER); }}
+                                                            className="p-1 hover:bg-white/10 rounded transition-colors text-gray-500 hover:text-white"
+                                                            title="新建分组"
+                                                        >
+                                                            <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" /></svg>
+                                                        </button>
+                                                        {/* Add Layer Dropdown */}
+                                                        <div className="relative">
+                                                            <button
+                                                                onMouseDown={(e) => {
+                                                                    e.stopPropagation();
+                                                                    setActiveMenuId(activeMenuId === file.id ? null : file.id);
+                                                                }}
+                                                                className={`p-1 hover:bg-white/10 rounded transition-colors ${activeMenuId === file.id ? 'bg-blue-600 text-white' : 'text-gray-500 hover:text-gray-300'}`}
+                                                                title="添加图层"
+                                                            >
+                                                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="3" d="M12 4v16m8-8H4" /></svg>
+                                                            </button>
+                                                            {activeMenuId === file.id && renderAddMenu(file.id)}
+                                                        </div>
+                                                    </>
+                                                )}
+                                                {/* Close File */}
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); onFileRemove(file.id); }}
+                                                    className="p-1 hover:bg-red-500/20 rounded transition-colors text-gray-500 hover:text-red-400"
+                                                    title="关闭文件"
+                                                >
+                                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="3" d="M6 18L18 6M6 6l12 12" /></svg>
+                                                </button>
+                                            </div>
                                         </div>
+
+                                        {/* Layers or Hint */}
                                         {isExpanded && (
-                                            <div className="border-l border-white/5 ml-7">
-                                                <LayersPanel
-                                                    layers={file.layers}
-                                                    stats={isActive ? layerStats : {}}
-                                                    selectedId={selectedLayerId}
-                                                    onSelect={onSelectLayer}
-                                                    onDrop={onLayerDrop}
-                                                    onRemove={onLayerRemove}
-                                                    onToggle={onLayerToggle}
-                                                    onUpdate={onLayerUpdate}
-                                                    onJumpToLine={isActive ? onJumpToLine : undefined}
-                                                />
+                                            <div className="bg-black/10 border-l border-blue-500/20 ml-5 py-0.5">
+                                                {hasLayers ? (
+                                                    <LayersPanel
+                                                        layers={file.layers}
+                                                        stats={isActive ? layerStats : {}}
+                                                        selectedId={isActive ? selectedLayerId : null}
+                                                        onSelect={isActive ? onSelectLayer : () => { }}
+                                                        onDrop={isActive ? onLayerDrop : () => { }}
+                                                        onRemove={isActive ? onLayerRemove : () => { }}
+                                                        onToggle={isActive ? onLayerToggle : () => { }}
+                                                        onUpdate={isActive ? onLayerUpdate : () => { }}
+                                                        onJumpToLine={isActive ? onJumpToLine : undefined}
+                                                        isReadOnly={!isActive}
+                                                    />
+                                                ) : (
+                                                    <div className="py-2 pl-4 text-[10px] text-blue-400/60 italic">
+                                                        点击上方 + 图标添加图层进行分析
+                                                    </div>
+                                                )}
                                             </div>
                                         )}
                                     </div>
