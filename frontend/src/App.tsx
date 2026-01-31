@@ -25,6 +25,7 @@ import {
   useLayerManagement,
   useSearch,
   useUIState,
+  useWorkspaceConfig,
   setBridgedCount,
   FileLoadedInfo
 } from './hooks';
@@ -157,6 +158,16 @@ const App: React.FC = () => {
   } = uiState;
 
   const [isLayerProcessing, setIsLayerProcessing] = React.useState(false);
+
+  // ===== WORKSPACE CONFIG PERSISTENCE =====
+  useWorkspaceConfig({
+    workspaceRoot,
+    files,
+    setFiles,
+    activeFileId,
+    setActiveFileId,
+    activeFilePath: activeFile?.path
+  });
 
   // ===== BRIDGE INTEGRATION =====
   const { bridgeApi, activeFileIdRef, setActiveFileId: setBridgeActiveFileId } = useBridge({

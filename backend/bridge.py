@@ -731,3 +731,37 @@ class FileBridge(QObject):
     def list_directory(self, folder_path: str) -> str:
         """Lists all files and folders in a directory (one level)."""
         return json.dumps(get_directory_contents(folder_path))
+
+    @pyqtSlot(str, str, result=bool)
+    def save_workspace_config(self, folder_path: str, config_json: str) -> bool:
+        """Save workspace configuration to .loglayer/config.json in the specified folder."""
+        try:
+            config_dir = Path(folder_path) / ".loglayer"
+            config_dir.mkdir(parents=True, exist_ok=True)
+            config_file = config_dir / "config.json"
+            
+            with open(config_file, 'w', encoding='utf-8') as f:
+                f.write(config_json)
+            
+            print(f"[Workspace] Saved config to {config_file}")
+            return True
+        except Exception as e:
+            print(f"[Workspace] Error saving config: {e}")
+            return False
+
+    @pyqtSlot(str, result=str)
+    def load_workspace_config(self, folder_path: str) -> str:
+        """Load workspace configuration from .loglayer/config.json in the specified folder."""
+        try:
+            config_file = Path(folder_path) / ".loglayer" / "config.json"
+            if not config_file.exists():
+                return ""
+            
+            with open(config_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            print(f"[Workspace] Loaded config from {config_file}")
+            return content
+        except Exception as e:
+            print(f"[Workspace] Error loading config: {e}")
+            return ""

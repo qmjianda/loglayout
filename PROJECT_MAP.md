@@ -82,3 +82,4 @@ graph TD
     - **Backend**: DRYed pipeline and filter logic in `bridge.py`. Unified recursive file discovery. Improved worker retirement system to be fully asynchronous.
     - **Frontend**: Refactored `App.tsx` by extracting complex loading UI into `LoadingOverlays.tsx`. Unified multi-channel file adding logic into a single `addNewFiles` helper. Simplified bridge initialization in `bridge_client.ts`.
     - **Architecture**: Solidified the session lifecycle management, ensuring workers are properly retired when files are closed or replaced.
+- **Workspace Config Persistence**: Added automatic layer configuration persistence. Layer configurations are now saved to `.loglayer/config.json` in the workspace folder and auto-loaded when reopening the same folder. Implemented via `useWorkspaceConfig` hook with 1-second debounced auto-save.

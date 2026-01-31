@@ -9,6 +9,8 @@ export interface FileBridgeAPI {
     select_folder: () => Promise<string>;
     list_logs_in_folder: (folderPath: string) => Promise<string>;
     list_directory: (folderPath: string) => Promise<string>;
+    save_workspace_config: (folderPath: string, configJson: string) => Promise<boolean>;
+    load_workspace_config: (folderPath: string) => Promise<string>;
     ready: () => Promise<void>;
 
 
@@ -144,7 +146,40 @@ export async function listDirectory(folderPath: string): Promise<any[]> {
     }
 }
 
+export interface WorkspaceConfig {
+    version: number;
+    lastModified: string;
+    files?: Array<{
+        path: string;
+        name: string;
+        size: number;
+        layers: any[];
+    }>;
+    activeFilePath?: string | null;
+    layers?: any[]; // Legacy/Global fallback
+}
 
+export async function saveWorkspaceConfig(folderPath: string, config: WorkspaceConfig): Promise<boolean> {
+    if (!fileBridge) return false;
+    try {
+        return await fileBridge.save_workspace_config(folderPath, JSON.stringify(config));
+    } catch (e) {
+        console.error('[Workspace] Failed to save config:', e);
+        return false;
+    }
+}
+
+export async function loadWorkspaceConfig(folderPath: string): Promise<WorkspaceConfig | null> {
+    if (!fileBridge) return null;
+    try {
+        const jsonStr = await fileBridge.load_workspace_config(folderPath);
+        if (!jsonStr) return null;
+        return JSON.parse(jsonStr) as WorkspaceConfig;
+    } catch (e) {
+        console.error('[Workspace] Failed to load config:', e);
+        return null;
+    }
+}
 
 export const initBridge = (): Promise<FileBridgeAPI | null> => {
     return new Promise((resolve) => {
