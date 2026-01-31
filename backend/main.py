@@ -1,11 +1,13 @@
 import sys
 import os
-from PyQt6.QtCore import QUrl, QObject, pyqtSlot, pyqtSignal
-from PyQt6.QtWidgets import QApplication, QMainWindow
-from PyQt6.QtGui import QIcon
-from PyQt6.QtWebEngineWidgets import QWebEngineView
-from PyQt6.QtWebEngineCore import QWebEngineSettings, QWebEnginePage
-from PyQt6.QtWebChannel import QWebChannel
+from qt_compat import (
+    QtCore, QtWidgets, QtGui, QtWebEngineWidgets, QtWebEngineCore, QtWebChannel,
+    pyqtSlot, pyqtSignal, Signal, Slot
+)
+from qt_compat import (
+    QUrl, QObject, QApplication, QMainWindow, QIcon,
+    QWebEngineView, QWebEngineSettings, QWebEnginePage, QWebChannel
+)
 from bridge import FileBridge, get_log_files_recursive
 
 class CustomWebEnginePage(QWebEnginePage):
@@ -67,7 +69,10 @@ class MainWindow(QMainWindow):
         # Enable developer extras and local file access (PyQt6 style)
         settings = self.browser.settings()
         try:
-            settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True)
+            # Handle Qt6 vs Qt5 attribute naming
+            attr = getattr(QWebEngineSettings.WebAttribute, 'LocalContentCanAccessFileUrls', None) if hasattr(QWebEngineSettings, 'WebAttribute') else getattr(QWebEngineSettings, 'LocalContentCanAccessFileUrls', None)
+            if attr is not None:
+                settings.setAttribute(attr, True)
         except Exception as e:
             print(f"Warning: Could not set LocalContentCanAccessFileUrls: {e}")
 
@@ -79,11 +84,49 @@ class MainWindow(QMainWindow):
         self.channel.registerObject('fileBridge', self.file_bridge)
         self.browser.page().setWebChannel(self.channel)
 
-        # Load the React app from Vite dev server
-        self.browser.setUrl(QUrl("http://localhost:3000"))
+        # Load the React app
+        # Handle PyInstaller frozen state
+        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+            base_dir = sys._MEIPASS
+        else:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+
+        prod_index_path = os.path.join(base_dir, "www", "index.html")
+
+        if os.path.exists(prod_index_path):
+            # Start local HTTP server
+            self.server_port = self._start_local_server(os.path.join(base_dir, "www"))
+            url = f"http://127.0.0.1:{self.server_port}/index.html"
+            print(f"Loading local frontend from: {url}")
+            self.browser.setUrl(QUrl(url))
+        else:
+            print("Loading dev frontend from: http://localhost:3000")
+            self.browser.setUrl(QUrl("http://localhost:3000"))
 
         # Pending CLI paths
         self.pending_cli_paths = []
+
+    def _start_local_server(self, root_dir):
+        from threading import Thread
+        import socket
+        from http.server import SimpleHTTPRequestHandler, HTTPServer
+
+        class QuietHandler(SimpleHTTPRequestHandler):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, directory=root_dir, **kwargs)
+            def log_message(self, format, *args):
+                pass
+
+        # Find a free port
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(('127.0.0.1', 0))
+        port = sock.getsockname()[1]
+        sock.close()
+
+        server = HTTPServer(('127.0.0.1', port), QuietHandler)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        return port
 
     def load_cli_paths(self, paths):
         self.pending_cli_paths = paths

@@ -1,4 +1,5 @@
 import os
+import sys
 import mmap
 import array
 import json
@@ -7,8 +8,14 @@ import subprocess
 
 import platform
 from pathlib import Path
-from PyQt6.QtCore import QObject, pyqtSlot, pyqtSignal, QThread, pyqtProperty
+from qt_compat import QObject, pyqtSlot, pyqtSignal, QThread, pyqtProperty
 from concurrent.futures import ThreadPoolExecutor
+
+def get_creationflags():
+    """Returns subprocess creation flags to hide windows on Windows."""
+    if platform.system() == "Windows":
+        return 0x08000000  # CREATE_NO_WINDOW
+    return 0
 
 def get_log_files_recursive(folder_path):
     """Utility to find log files in a directory recursively."""
@@ -150,7 +157,7 @@ class PipelineWorker(QThread):
             cmd.extend([primary['query'], self.file_path])
             
             print(f"[Pipeline] Start for {self.file_path}, query: {primary.get('query')}, filters: {len(self.filters)}")
-            p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='ignore')
+            p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='ignore', creationflags=get_creationflags())
             procs.append(p)
             current_stdout = p.stdout
 
@@ -162,7 +169,7 @@ class PipelineWorker(QThread):
                 wrapper_pattern = f"^{case_flag}[^:]*:.*{pattern}"
                 
                 cmd = [self.rg_path, "--no-heading", "--no-filename", "--color", "never", wrapper_pattern]
-                p = subprocess.Popen(cmd, stdin=current_stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='ignore')
+                p = subprocess.Popen(cmd, stdin=current_stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='ignore', creationflags=get_creationflags())
                 procs.append(p)
                 if current_stdout: current_stdout.close()
                 current_stdout = p.stdout
@@ -300,16 +307,16 @@ class StatsWorker(QThread):
                     else:
                         # Pipe chain
                         head_cmd = cmd_chain[0] + [self.file_path]
-                        p_head = subprocess.Popen(head_cmd, stdout=subprocess.PIPE)
+                        p_head = subprocess.Popen(head_cmd, stdout=subprocess.PIPE, creationflags=get_creationflags())
                         self._processes.append(p_head)
                         curr_p = p_head
                         for i in range(1, len(cmd_chain)):
-                            p_next = subprocess.Popen(cmd_chain[i], stdin=curr_p.stdout, stdout=subprocess.PIPE)
+                            p_next = subprocess.Popen(cmd_chain[i], stdin=curr_p.stdout, stdout=subprocess.PIPE, creationflags=get_creationflags())
                             self._processes.append(p_next)
                             curr_p.stdout.close()
                             curr_p = p_next
                         
-                        p_final = subprocess.Popen(final_cmd, stdin=curr_p.stdout, stdout=subprocess.PIPE, text=True, errors='ignore')
+                        p_final = subprocess.Popen(final_cmd, stdin=curr_p.stdout, stdout=subprocess.PIPE, text=True, errors='ignore', creationflags=get_creationflags())
                         self._processes.append(p_final)
                         curr_p.stdout.close()
                     
@@ -437,10 +444,22 @@ class FileBridge(QObject):
             self._zombie_workers.remove(worker)
 
     def _get_rg_path(self):
-        base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        if platform.system() == "Windows":
-            return os.path.join(base_path, "bin", "windows", "rg.exe")
-        return os.path.join(base_path, "bin", "linux", "rg")
+        # Handle PyInstaller frozen state
+        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+            base_dir = sys._MEIPASS
+        else:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            
+        # 1. Check if bin is inside the current directory (bundled or frozen)
+        bundled_bin = os.path.join(base_dir, "bin", "windows" if platform.system() == "Windows" else "linux")
+        
+        # 2. Check if bin is in the parent directory (dev mode)
+        dev_bin = os.path.join(os.path.dirname(base_dir), "bin", "windows" if platform.system() == "Windows" else "linux")
+        
+        path_to_check = bundled_bin if os.path.exists(bundled_bin) else dev_bin
+        
+        exe = "rg.exe" if platform.system() == "Windows" else "rg"
+        return os.path.join(path_to_check, exe)
 
     @pyqtSlot(str, str, result=bool)
     def open_file(self, file_id: str, file_path: str) -> bool:
@@ -709,7 +728,7 @@ class FileBridge(QObject):
     @pyqtSlot(result=str)
     def select_files(self) -> str:
         """Helper for frontend to trigger native open (multiple). Returns JSON list of paths."""
-        from PyQt6.QtWidgets import QFileDialog, QApplication
+        from qt_compat import QFileDialog, QApplication
         parent = QApplication.activeWindow()
         paths, _ = QFileDialog.getOpenFileNames(parent, "Open Log Files", "", "Log Files (*.log *.txt *.json);;All Files (*)")
         return json.dumps(paths)
@@ -717,7 +736,7 @@ class FileBridge(QObject):
     @pyqtSlot(result=str)
     def select_folder(self) -> str:
         """Helper for frontend to trigger native folder selection."""
-        from PyQt6.QtWidgets import QFileDialog, QApplication
+        from qt_compat import QFileDialog, QApplication
         parent = QApplication.activeWindow()
         path = QFileDialog.getExistingDirectory(parent, "Select Folder", "")
         return path

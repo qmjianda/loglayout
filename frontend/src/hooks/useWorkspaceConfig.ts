@@ -5,7 +5,7 @@
  * loads them when the same workspace is opened again.
  */
 
-import { useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useRef, useCallback } from 'react';
 import { LogLayer } from '../types';
 import { saveWorkspaceConfig, loadWorkspaceConfig, WorkspaceConfig } from '../bridge_client';
 import { FileData } from './useFileManagement';
@@ -20,6 +20,7 @@ export interface UseWorkspaceConfigProps {
     activeFileId: string | null;
     setActiveFileId: (id: string | null) => void;
     activeFilePath: string | undefined;
+    handleFileActivate: (id: string) => void;
 }
 
 export interface UseWorkspaceConfigReturn {

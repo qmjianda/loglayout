@@ -131,19 +131,23 @@ export function useFileManagement(): UseFileManagementReturn {
 
     // Activate file
     const handleFileActivate = useCallback((fileId: string) => {
-        if (activeFileId === fileId) return;
+        // Change UI state if needed
+        if (activeFileId !== fileId) {
+            setActiveFileId(fileId);
+        }
 
-        setActiveFileId(fileId);
         const file = files.find(f => f.id === fileId);
+        if (!file?.path) return;
 
-        // Only call openFile if not already loaded
+        // Check if backend has this file open
         const isLoaded = getBridgedCount(fileId) !== undefined;
 
-        if (file?.path && !isLoaded) {
+        // Still trigger openFile if backend is not synchronized
+        if (!isLoaded && !loadingFileIds.has(fileId)) {
             setLoadingFileIds(prev => new Set(prev).add(fileId));
             openFile(fileId, file.path);
         }
-    }, [activeFileId, files, setActiveFileId]);
+    }, [activeFileId, files, setActiveFileId, loadingFileIds]);
 
     // Remove file
     const handleFileRemove = useCallback((fileId: string) => {

@@ -166,7 +166,8 @@ const App: React.FC = () => {
     setFiles,
     activeFileId,
     setActiveFileId,
-    activeFilePath: activeFile?.path
+    activeFilePath: activeFile?.path,
+    handleFileActivate
   });
 
   // ===== BRIDGE INTEGRATION =====
@@ -283,17 +284,8 @@ const App: React.FC = () => {
 
   // Enhanced file activate that opens file on backend
   const handleFileActivateWithLoad = useCallback((fileId: string) => {
-    if (activeFileId === fileId) return;
-    setActiveFileId(fileId);
-
-    const file = files.find(f => f.id === fileId);
-    const isLoaded = processedCache[fileId]?.layerStats !== undefined;
-
-    if (file?.path && !isLoaded) {
-      setIsProcessing(true);
-      openFile(fileId, file.path);
-    }
-  }, [activeFileId, files, processedCache, setActiveFileId, setIsProcessing]);
+    handleFileActivate(fileId);
+  }, [handleFileActivate]);
 
   // Find next search match with jump
   const findNextSearchMatchWithJump = useCallback((direction: 'next' | 'prev') => {
