@@ -5,9 +5,10 @@
  */
 
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
-import { LogLayer, LayerType, LayerPreset } from '../types';
-import { syncAll } from '../bridge_client';
+import { LogLayer, LayerType, LayerPreset, LayerRegistryEntry } from '../types';
+import { syncAll, getLayerRegistry } from '../bridge_client';
 import { FileData } from './useFileManagement';
+import { useLayerRegistry } from './useLayerRegistry';
 
 const MAX_HISTORY = 100;
 const DEFAULT_PRESET_ID = 'system-default-preset';
@@ -178,8 +179,10 @@ export function useLayerManagement({
         }));
     }, [activeFileId, setFiles]);
 
+    const { registry } = useLayerRegistry();
+
     // Add layer
-    const addLayer = useCallback((type: LayerType, initialConfig: any = {}) => {
+    const addLayer = useCallback((type: LayerType | string, initialConfig: any = {}) => {
         const newId = Math.random().toString(36).substr(2, 9);
         let parentId: string | undefined = undefined;
 
@@ -189,25 +192,39 @@ export function useLayerManagement({
             else if (selected?.groupId) parentId = selected.groupId;
         }
 
-        const defaultConfig =
-            type === LayerType.HIGHLIGHT ? { color: '#3b82f6', opacity: 100, query: '' } :
-                type === LayerType.TIME_RANGE ? { startTime: '', endTime: '', timeFormat: '(\\d{4}-\\d{2}-\\d{2}\\s\\d{2}:\\d{2}:\\d{2})' } :
-                    type === LayerType.RANGE ? { from: 1, to: 1000 } :
-                        type === LayerType.TRANSFORM ? { query: '', replaceWith: '', regex: true } :
-                            type === LayerType.LEVEL ? { levels: ['ERROR', 'WARN'] } :
-                                type === LayerType.FILTER ? { query: '', regex: false } : {};
+        if (type === LayerType.FOLDER) {
+            const newLayer: LogLayer = {
+                id: newId,
+                name: '新建分组',
+                type: LayerType.FOLDER,
+                enabled: true,
+                groupId: parentId,
+                isCollapsed: false,
+                config: {}
+            };
+            updateLayers(prev => [...prev, newLayer]);
+            setSelectedLayerId(newId);
+            return;
+        }
+
+        // Lookup in registry
+        const entry = registry[type];
+        if (!entry) {
+            console.warn(`[useLayerManagement] Unknown layer type: ${type}`);
+            return;
+        }
+
+        const defaultConfig: any = {};
+        entry.ui_schema.forEach(field => {
+            if (field.value !== undefined) {
+                defaultConfig[field.name] = field.value;
+            }
+        });
 
         const newLayer: LogLayer = {
             id: newId,
-            name:
-                type === LayerType.FOLDER ? '新建文件夹' :
-                    type === LayerType.TIME_RANGE ? '时间过滤' :
-                        type === LayerType.RANGE ? '行号范围' :
-                            type === LayerType.TRANSFORM ? '内容转换' :
-                                type === LayerType.LEVEL ? '日志等级' :
-                                    type === LayerType.FILTER ? '内容过滤' :
-                                        type === LayerType.HIGHLIGHT ? '高亮图层' : '新建图层',
-            type,
+            name: entry.display_name,
+            type: type as LayerType,
             enabled: true,
             groupId: parentId,
             isCollapsed: false,
@@ -216,7 +233,7 @@ export function useLayerManagement({
 
         updateLayers(prev => [...prev, newLayer]);
         setSelectedLayerId(newId);
-    }, [selectedLayerId, layers, updateLayers]);
+    }, [selectedLayerId, layers, updateLayers, registry]);
 
     // Handle drag and drop
     const handleDrop = useCallback((draggedId: string, targetId: string | null, position: 'inside' | 'before' | 'after') => {
@@ -225,22 +242,44 @@ export function useLayerManagement({
             const draggedIdx = next.findIndex(l => l.id === draggedId);
             if (draggedIdx === -1) return prev;
 
-            const [draggedLayer] = next.splice(draggedIdx, 1);
+            const targetIdx = targetId ? next.findIndex(l => l.id === targetId) : -1;
+            if (targetId && targetIdx === -1) return prev;
+
+            // Prevent dropping a folder into itself or its descendants
+            if (targetId) {
+                let curr: string | undefined = targetId;
+                while (curr) {
+                    if (curr === draggedId) {
+                        console.warn("[LayerManagement] Circular drop prevented");
+                        return prev;
+                    }
+                    curr = next.find(l => l.id === curr)?.groupId;
+                }
+            }
+
+            // Remove and clone the dragged layer
+            let [draggedLayer] = next.splice(draggedIdx, 1);
+            draggedLayer = { ...draggedLayer };
+
+            // Find current target index in the MODIFIED array
+            const currentTargetIdx = targetId ? next.findIndex(l => l.id === targetId) : -1;
 
             if (position === 'inside' && targetId) {
                 draggedLayer.groupId = targetId;
-                const targetIdx = next.findIndex(l => l.id === targetId);
-                next.splice(targetIdx + 1, 0, draggedLayer);
+                // Place as the first child of the folder
+                next.splice(currentTargetIdx + 1, 0, draggedLayer);
             } else if (targetId) {
-                const targetIdx = next.findIndex(l => l.id === targetId);
-                draggedLayer.groupId = next[targetIdx].groupId;
-                const finalIdx = position === 'before' ? targetIdx : targetIdx + 1;
+                const targetLayer = next[currentTargetIdx];
+                draggedLayer.groupId = targetLayer.groupId;
+                const finalIdx = position === 'before' ? currentTargetIdx : currentTargetIdx + 1;
                 next.splice(finalIdx, 0, draggedLayer);
             } else {
                 draggedLayer.groupId = undefined;
                 next.push(draggedLayer);
             }
 
+            // Clear global fallback
+            (window as any).__draggedLayerId = null;
             return next;
         });
     }, [updateLayers]);

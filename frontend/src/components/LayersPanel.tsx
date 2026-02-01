@@ -1,7 +1,7 @@
-
-import React, { useState } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { LogLayer, LayerType } from '../types';
-import * as Configs from './layer-configs';
+import { DynamicForm } from './DynamicUI/DynamicForm';
+import { useLayerRegistry } from '../hooks/useLayerRegistry';
 
 interface LayersPanelProps {
   layers: LogLayer[];
@@ -16,15 +16,6 @@ interface LayersPanelProps {
   isReadOnly?: boolean;
 }
 
-const CONFIG_COMPONENTS: Partial<Record<LayerType, React.FC<any>>> = {
-  [LayerType.FILTER]: Configs.FilterConfig,
-  [LayerType.HIGHLIGHT]: Configs.HighlightConfig,
-  [LayerType.RANGE]: Configs.RangeConfig,
-  [LayerType.TIME_RANGE]: Configs.TimeRangeConfig,
-  [LayerType.LEVEL]: Configs.LevelConfig,
-  [LayerType.TRANSFORM]: Configs.TransformConfig,
-};
-
 export const LayersPanel: React.FC<LayersPanelProps> = ({
   layers, stats, selectedId, onSelect, onRemove, onToggle, onUpdate, onDrop, isReadOnly = false
 }) => {
@@ -33,23 +24,29 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
   const [dropPosition, setDropPosition] = useState<'inside' | 'before' | 'after' | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isInputActive, setIsInputActive] = useState(false);
+  const [editValue, setEditValue] = useState('');
 
-  const [hoveredLayerId, setHoveredLayerId] = useState<string | null>(null);
-  const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
+  const { registry } = useLayerRegistry();
 
   const handleDragStart = (e: React.DragEvent, id: string) => {
+    // Only allow dragging from a specific handle or if not clicking on controls
     const target = e.target as HTMLElement;
-    if (target.closest('.no-drag') || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || editingId === id || isInputActive) {
+    if (target.closest('.no-drag') || target.tagName === 'INPUT' || target.tagName === 'BUTTON' || target.closest('button')) {
       e.preventDefault();
       return;
     }
 
     setDraggedLayerId(id);
+    (window as any).__draggedLayerId = id;
+
     e.dataTransfer.setData('layerId', id);
+    e.dataTransfer.setData('text/plain', id);
     e.dataTransfer.effectAllowed = 'move';
 
+    // Set a clear drag image if possible (optional but good for consistency)
     const currentTarget = e.currentTarget as HTMLElement;
     currentTarget.classList.add('dragging');
+    e.dataTransfer.dropEffect = 'move';
   };
 
   const handleDragEnd = (e: React.DragEvent) => {
@@ -57,11 +54,15 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
     setDragOverId(null);
     setDropPosition(null);
     setDraggedLayerId(null);
+    (window as any).__draggedLayerId = null;
   };
 
   const handleDragOver = (e: React.DragEvent, id: string, type: LayerType) => {
-    e.preventDefault();
-    if (draggedLayerId === id) return;
+    e.preventDefault(); // IMPORTANT: Required to allow drop
+    e.dataTransfer.dropEffect = 'move'; // Show 'move' cursor instead of forbidden
+
+    const draggedId = (window as any).__draggedLayerId || draggedLayerId;
+    if (draggedId === id) return;
 
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const y = e.clientY - rect.top;
@@ -79,26 +80,52 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
 
   const handleDropLocal = (e: React.DragEvent, targetId: string) => {
     e.preventDefault();
-    const draggedId = e.dataTransfer.getData('layerId');
+    e.stopPropagation();
+    if (isReadOnly) return;
+
+    const draggedId = e.dataTransfer.getData('layerId') || (window as any).__draggedLayerId || draggedLayerId;
+
     if (draggedId && draggedId !== targetId && dropPosition) {
       onDrop(draggedId, targetId, dropPosition);
     }
+
     setDragOverId(null);
     setDropPosition(null);
     setDraggedLayerId(null);
+    (window as any).__draggedLayerId = null;
   };
 
   const getLayerIcon = (layer: LogLayer) => {
-    switch (layer.type) {
-      case LayerType.FILTER: return <svg className="w-3.5 h-3.5 text-blue-400" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M3 4h18l-7 9v6l-4 2V13L3 4z" /></svg>;
-      case LayerType.HIGHLIGHT: return <svg className="w-3.5 h-3.5 text-yellow-400" fill="currentColor" viewBox="0 0 24 24"><path d="M12 21a9 9 0 110-18 9 9 0 010 18z" /></svg>;
-      case LayerType.RANGE: return <svg className="w-3.5 h-3.5 text-teal-400" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M7 8l-4 4 4 4M17 8l4 4-4 4M13 4l-2 16" /></svg>;
-      case LayerType.TIME_RANGE: return <svg className="w-3.5 h-3.5 text-purple-400" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>;
-      case LayerType.TRANSFORM: return <svg className="w-3.5 h-3.5 text-orange-400" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M4 4h16v16H4V4zm4 4h8v8H8V8z" /></svg>;
-      case LayerType.FOLDER: return <svg className="w-4 h-4 text-gray-400" fill="currentColor" viewBox="0 0 20 20"><path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" /></svg>;
-      case LayerType.LEVEL: return <svg className="w-3.5 h-3.5 text-red-400" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>;
-      default: return <svg className="w-3.5 h-3.5 text-gray-500" fill="currentColor" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16" /></svg>;
-    }
+    const entry = registry[layer.type];
+    const iconKey = entry?.icon || 'default';
+
+    const ICON_LIBRARY: Record<string, React.ReactNode> = {
+      filter: <svg className="w-3.5 h-3.5 text-blue-400" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M3 4h18l-7 9v6l-4 2V13L3 4z" /></svg>,
+      highlight: <svg className="w-3.5 h-3.5 text-yellow-400" fill="currentColor" viewBox="0 0 24 24"><path d="M12 21a9 9 0 110-18 9 9 0 010 18z" /></svg>,
+      range: <svg className="w-3.5 h-3.5 text-teal-400" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M7 8l-4 4 4 4M17 8l4 4-4 4M13 4l-2 16" /></svg>,
+      time: <svg className="w-3.5 h-3.5 text-purple-400" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
+      transform: <svg className="w-3.5 h-3.5 text-orange-400" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M4 4h16v16H4V4zm4 4h8v8H8V8z" /></svg>,
+      folder: <svg className="w-4 h-4 text-gray-400" fill="currentColor" viewBox="0 0 20 20"><path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" /></svg>,
+      level: <svg className="w-3.5 h-3.5 text-red-400" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>,
+      default: <svg className="w-3.5 h-3.5 text-gray-500" fill="currentColor" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
+    };
+
+    if (layer.type === LayerType.FOLDER) return ICON_LIBRARY.folder;
+    return ICON_LIBRARY[iconKey] || ICON_LIBRARY.default;
+  };
+
+  const renderStatsBar = (layer: LogLayer) => {
+    const distribution = stats[layer.id]?.distribution || [];
+    if (distribution.length === 0) return null;
+    return (
+      <div className="flex h-1 gap-[1px] mt-0.5 opacity-60 px-4">
+        {distribution.map((v, i) => (
+          <div key={i} className="flex-1 bg-blue-500/20 rounded-full overflow-hidden">
+            <div className="h-full bg-blue-500" style={{ width: `${v * 100}%` }} />
+          </div>
+        ))}
+      </div>
+    );
   };
 
   const renderLayerCard = (layer: LogLayer, depth: number = 0) => {
@@ -108,10 +135,16 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
     const isEditing = editingId === layer.id;
     const parent = layer.groupId ? layers.find(l => l.id === layer.groupId) : null;
     const effectivelyDisabled = !layer.enabled || (parent && !parent.enabled);
-    const ConfigComponent = CONFIG_COMPONENTS[layer.type];
-
-    const layerColor = layer.config.color || (layer.type === LayerType.RANGE ? '#2dd4bf' : layer.type === LayerType.TIME_RANGE ? '#a855f7' : layer.type === LayerType.TRANSFORM ? '#fb923c' : layer.type === LayerType.LEVEL ? '#f87171' : '#3b82f6');
+    const registryEntry = registry[layer.type];
     const layerCount = stats[layer.id]?.count || 0;
+
+    const saveName = () => {
+      if (editValue.trim() && editValue.trim() !== layer.name) {
+        onUpdate(layer.id, { name: editValue.trim() });
+      }
+      setEditingId(null);
+      setIsInputActive(false);
+    };
 
     return (
       <div
@@ -119,107 +152,142 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
         draggable={!isEditing && !isInputActive && !isReadOnly}
         onDragStart={(e) => isReadOnly ? e.preventDefault() : handleDragStart(e, layer.id)}
         onDragEnd={handleDragEnd}
-        onDragOver={(e) => isReadOnly ? null : handleDragOver(e, layer.id, layer.type)}
+        onDragOver={(e) => handleDragOver(e, layer.id, layer.type)}
         onDragLeave={(e) => {
           if (!e.currentTarget.contains(e.relatedTarget as Node)) {
             setDragOverId(null);
             setDropPosition(null);
           }
         }}
-        onDrop={(e) => isReadOnly ? null : handleDropLocal(e, layer.id)}
-        onMouseLeave={() => setHoveredLayerId(null)}
-        onClick={(e) => {
-          if (isReadOnly) return;
-          const target = e.target as HTMLElement;
-          if (target.tagName === 'INPUT' || target.tagName === 'BUTTON' || target.closest('button')) return;
-          if (target.closest('.no-drag')) return;
-          // Select the layer AND toggle collapse
-          onSelect(layer.id);
-          onUpdate(layer.id, { isCollapsed: !layer.isCollapsed });
-        }}
-        onDoubleClick={() => !isReadOnly && setEditingId(layer.id)}
-        className={`flex flex-col border-b border-[#111] relative group transition-all duration-200 overflow-hidden
-          bg-[#252526] hover:bg-[#2d2d30]
-          ${isDragOver && dropPosition === 'inside' ? 'bg-blue-500/15 drop-target-inside ring-1 ring-blue-500/50 ring-inset' : ''}
-          ${effectivelyDisabled ? 'opacity-40' : ''}
-          ${isReadOnly ? 'pointer-events-none opacity-60' : 'cursor-pointer'}`}
+        onDrop={(e) => handleDropLocal(e, layer.id)}
+        className={`flex flex-col border-b border-[#111] relative group transition-all duration-200 select-none overflow-hidden
+          ${isSelected ? 'bg-[#37373d]' : 'bg-[#252526] hover:bg-[#2d2d30]'}
+          ${isDragOver && dropPosition === 'inside' ? 'bg-blue-500/15 ring-2 ring-blue-500/50 ring-inset' : ''}
+          ${effectivelyDisabled ? 'opacity-40' : ''}`}
       >
-        {isDragOver && dropPosition === 'before' && (
-          <div className="absolute top-0 left-0 right-0 h-[2px] bg-blue-500 z-50 pointer-events-none shadow-[0_0_8px_rgba(59,130,246,0.8)] flex items-center justify-center">
-            <span className="bg-blue-500 text-white text-[9px] px-1.5 rounded-b shadow-md font-sans -mt-0.5">插入到上方</span>
-          </div>
-        )}
-        {isDragOver && dropPosition === 'after' && (
-          <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-blue-500 z-50 pointer-events-none shadow-[0_0_8px_rgba(59,130,246,0.8)] flex items-center justify-center">
-            <span className="bg-blue-500 text-white text-[9px] px-1.5 rounded-t shadow-md font-sans -mb-0.5">插入到下方</span>
-          </div>
-        )}
+        {/* Layer Header */}
+        <div
+          className="flex items-center min-h-[36px] px-2 space-x-1 relative"
+          style={{ paddingLeft: `${depth * 14 + 4}px` }}
+          onClick={(e) => {
+            if (isReadOnly) return;
+            const target = e.target as HTMLElement;
+            if (target.tagName === 'INPUT' || target.tagName === 'BUTTON' || target.closest('button') || target.closest('.no-drag')) return;
 
-        <div className={`flex items-center py-1 min-h-[32px] overflow-hidden`} style={{ paddingLeft: `${depth * 10 + 2}px` }}>
-          {/* Collapse arrow - visual indicator only */}
-          <div className={`w-6 h-6 flex items-center justify-center shrink-0 text-gray-500 transition-transform ${layer.isCollapsed ? '-rotate-90' : ''}`}>
-            <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" /></svg>
-          </div>
-
-          <div
-            className={`w-7 h-7 flex items-center justify-center shrink-0 cursor-pointer rounded ${layer.enabled ? 'text-gray-400' : 'text-gray-700'}`}
-            onClick={(e) => { e.stopPropagation(); onToggle(layer.id); }}
-            title={layer.enabled ? '点击禁用图层' : '点击启用图层'}
+            if (selectedId !== layer.id) {
+              onSelect(layer.id);
+              if (layer.isCollapsed) onUpdate(layer.id, { isCollapsed: false });
+            } else {
+              onUpdate(layer.id, { isCollapsed: !layer.isCollapsed });
+            }
+          }}
+          onDoubleClick={() => {
+            if (!isReadOnly) {
+              setEditingId(layer.id);
+              setEditValue(layer.name);
+              setIsInputActive(true);
+            }
+          }}
+        >
+          {/* Collapse toggle arrow */}
+          <div className={`no-drag w-5 h-5 flex items-center justify-center shrink-0 text-gray-500 transition-transform cursor-pointer hover:text-gray-300
+            ${(isFolder ? layer.isCollapsed : (!isSelected || layer.isCollapsed)) ? '-rotate-90' : ''}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onUpdate(layer.id, { isCollapsed: !layer.isCollapsed });
+            }}
           >
-            <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path d="M10 12a2 2 0 100-4 2 2 0 000 4z" /><path fillRule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clipRule="evenodd" /></svg>
+            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" /></svg>
           </div>
 
-          <div className="w-7 h-7 flex items-center justify-center shrink-0">
-            {getLayerIcon(layer)}
+          {/* Drag Handle Icon (visible on hover) */}
+          <div className="w-4 h-5 flex items-center justify-center shrink-0 cursor-grab active:cursor-grabbing text-gray-700 group-hover:text-gray-500 transition-colors">
+            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+              <path d="M7 7a1 1 0 100-2 1 1 0 000 2zm3 0a1 1 0 100-2 1 1 0 000 2zm3 0a1 1 0 100-2 1 1 0 000 2zm-6 4a1 1 0 100-2 1 1 0 000 2zm3 0a1 1 0 100-2 1 1 0 000 2zm3 0a1 1 0 100-2 1 1 0 000 2z" />
+            </svg>
           </div>
 
-          <div className="flex-1 min-w-0 flex items-center justify-between ml-1 pr-1">
+          <div className="shrink-0 w-6 h-6 flex items-center justify-center">{getLayerIcon(layer)}</div>
+
+          {/* Name/Edit area */}
+          <div className="flex-1 min-w-0 flex items-center">
             {isEditing ? (
               <input
-                autoFocus className="bg-[#1e1e1e] border border-blue-500 text-[11px] px-1 rounded text-white w-full select-text h-5"
-                value={layer.name} onChange={(e) => onUpdate(layer.id, { name: e.target.value })}
-                onBlur={() => { setEditingId(null); setIsInputActive(false); }}
-                onFocus={() => setIsInputActive(true)}
-                onKeyDown={(e) => e.key === 'Enter' && setEditingId(null)}
+                autoFocus
+                className="no-drag w-full bg-[#1e1e1e] border border-blue-500 text-[11px] px-1 rounded text-white h-6 outline-none shadow-[0_0_5px_rgba(59,130,246,0.3)]"
+                value={editValue}
+                onChange={(e) => setEditValue(e.target.value)}
+                onBlur={saveName}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') saveName();
+                  if (e.key === 'Escape') {
+                    setEditingId(null);
+                    setIsInputActive(false);
+                  }
+                }}
                 onMouseDown={e => e.stopPropagation()}
               />
             ) : (
-              <span className={`text-[11px] truncate leading-tight flex-1 ${isFolder ? 'font-bold text-gray-300' : 'text-gray-400'}`}>{layer.name}</span>
+              <span className={`text-[11px] truncate leading-tight flex-1 ${isFolder ? 'font-bold text-gray-300' : 'text-gray-400'} ${isSelected ? 'text-white' : ''}`}>
+                {layer.name}
+              </span>
             )}
             {!isFolder && layerCount > 0 && (
-              <span className="text-[9px] bg-black/40 px-1 py-0.5 rounded text-gray-500 font-mono ml-2 shrink-0">
+              <span className="text-[9px] bg-black/40 px-1.5 py-0.5 rounded text-gray-500 font-mono ml-2 shrink-0 border border-white/5">
                 {layerCount.toLocaleString()}
               </span>
             )}
           </div>
 
-          <div className="w-8 h-8 flex items-center justify-center shrink-0">
+          {/* Actions */}
+          <div className="no-drag flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+            <button
+              onClick={(e) => { e.stopPropagation(); onUpdate(layer.id, { enabled: !layer.enabled }); }}
+              className={`p-1.5 ${layer.enabled ? 'text-blue-500' : 'text-gray-600'} hover:bg-white/5 rounded`}
+              title={layer.enabled ? '禁用' : '启用'}
+            >
+              <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" /></svg>
+            </button>
             <button
               onClick={(e) => { e.stopPropagation(); onRemove(layer.id); }}
-              className="w-full h-full flex items-center justify-center opacity-0 group-hover:opacity-100 hover:text-red-400 text-gray-600 transition-opacity"
-              title="删除图层"
+              className="p-1.5 text-gray-600 hover:text-red-400 hover:bg-red-500/10 rounded"
+              title="删除"
             >
               <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="3" d="M6 18L18 6M6 6l12 12" /></svg>
             </button>
           </div>
         </div>
 
-        {isSelected && !isFolder && !layer.isCollapsed && ConfigComponent && (
-          <div
-            className="px-3 pb-1 space-y-3 border-t border-black/10 pt-3 bg-black/5 shadow-inner"
-            onMouseEnter={() => setIsInputActive(true)}
-            onMouseLeave={() => setIsInputActive(false)}
-            onMouseDown={e => e.stopPropagation()}
-            style={{ paddingLeft: `${depth * 10 + 20}px` }}
-          >
-            <ConfigComponent
-              config={layer.config}
-              onUpdate={(cfg: any) => onUpdate(layer.id, { config: { ...layer.config, ...cfg } })}
-              setDragDisabled={setIsInputActive}
-            />
-          </div>
+        {/* Drop Indicators */}
+        {isDragOver && dropPosition === 'before' && (
+          <div className="absolute top-0 left-0 right-0 h-[2px] bg-blue-500 z-[100] pointer-events-none shadow-[0_0_5px_rgba(59,130,246,0.8)]" />
+        )}
+        {isDragOver && dropPosition === 'after' && (
+          <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-blue-500 z-[100] pointer-events-none shadow-[0_0_5px_rgba(59,130,246,0.8)]" />
         )}
 
+        {/* Nested Content Wrapper */}
+        <div className={`flex flex-col ${(isFolder ? layer.isCollapsed : (!isSelected || layer.isCollapsed)) ? 'h-0 overflow-hidden' : ''}`}>
+          {/* Config Form (only for non-folders) */}
+          {!isFolder && isSelected && registryEntry && (
+            <div
+              className="no-drag px-3 pb-3 space-y-3 border-t border-black/10 pt-3 bg-black/5"
+              onMouseEnter={() => setIsInputActive(true)}
+              onMouseLeave={() => setIsInputActive(false)}
+              onMouseDown={e => e.stopPropagation()}
+              onDragOver={e => e.preventDefault()} // Prevent parent drag highlighting here
+            >
+              <DynamicForm
+                registryEntry={registryEntry}
+                config={layer.config}
+                onUpdate={(cfg: any) => onUpdate(layer.id, { config: { ...layer.config, ...cfg } })}
+              />
+            </div>
+          )}
+        </div>
+
+        {/* Render stats bar at bottom of card */}
+        {!isFolder && isSelected && renderStatsBar(layer)}
       </div>
     );
   };
@@ -236,8 +304,31 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
   };
 
   return (
-    <div className="flex flex-col pb-0">
+    <div
+      className="flex flex-col pb-20 min-h-[200px] select-none"
+      onDragOver={(e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        // Only target root if we're not over a specific card (propagation not stopped)
+        if (dragOverId === null || dragOverId === 'root') {
+          setDragOverId('root');
+          setDropPosition('after');
+        }
+      }}
+      onDrop={(e) => {
+        if (isReadOnly) return;
+        const draggedId = e.dataTransfer.getData('layerId') || (window as any).__draggedLayerId;
+        if (draggedId) {
+          onDrop(draggedId, null, 'after');
+        }
+        setDragOverId(null);
+        setDropPosition(null);
+      }}
+    >
       {renderRecursive()}
+      {dragOverId === 'root' && (
+        <div className="h-[2px] bg-blue-500 m-4 rounded-full animate-pulse shadow-[0_0_10px_rgba(59,130,246,0.8)]" />
+      )}
     </div>
   );
 };

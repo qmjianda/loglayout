@@ -68,7 +68,7 @@ const App: React.FC = () => {
   const fileSize = activeFile?.size || 0;
   const activeProcessed = activeFileId ? processedCache[activeFileId] : null;
   const layerStats = activeProcessed?.layerStats || {};
-  const bridgedMatches = activeProcessed?.searchMatches || [];
+  const searchMatchCount = activeProcessed?.searchMatchCount || 0;
 
   // ===== LAYER MANAGEMENT =====
   const layerManagement = useLayerManagement({
@@ -106,7 +106,7 @@ const App: React.FC = () => {
     layers,
     layersFunctionalHash,
     lineCount: activeFile?.lineCount || 0,
-    bridgedMatches,
+    searchMatchCount,
     setProcessedCache
   });
 
@@ -115,11 +115,12 @@ const App: React.FC = () => {
     setSearchQuery,
     searchConfig,
     setSearchConfig,
+    currentMatchRank,
+    setCurrentMatchRank,
     currentMatchIndex,
-    setCurrentMatchIndex,
     isSearching,
     setIsSearching,
-    searchMatchCount,
+    searchMatchCount: searchMatchCountFromHook, // Renamed to avoid collision with accessor
     currentMatchNumber,
     findNextSearchMatch,
     clearSearch
@@ -211,12 +212,12 @@ const App: React.FC = () => {
       markFileLoaded(fileId);
     },
 
-    onPipelineFinished: (fileId, newTotal, matches) => {
+    onPipelineFinished: (fileId, newTotal, matchCount) => {
       setBridgedCount(fileId, newTotal);
       setFiles(prev => prev.map(f => f.id === fileId ? { ...f, lineCount: newTotal } : f));
       setProcessedCache(prev => ({
         ...prev,
-        [fileId]: { ...(prev[fileId] || {}), searchMatches: matches }
+        [fileId]: { ...(prev[fileId] || {}), searchMatchCount: matchCount }
       }));
       triggerUpdate();
 
@@ -288,8 +289,8 @@ const App: React.FC = () => {
   }, [handleFileActivate]);
 
   // Find next search match with jump
-  const findNextSearchMatchWithJump = useCallback((direction: 'next' | 'prev') => {
-    const nextIdx = findNextSearchMatch(direction);
+  const findNextSearchMatchWithJump = useCallback(async (direction: 'next' | 'prev') => {
+    const nextIdx = await findNextSearchMatch(direction);
     if (nextIdx !== -1) {
       handleJumpToLine(nextIdx, activeFile?.lineCount || 0);
     }
@@ -304,7 +305,16 @@ const App: React.FC = () => {
   }, [handleNativeFolderSelect, setWorkspaceRoot]);
 
   return (
-    <div className="flex flex-col h-screen select-none overflow-hidden text-sm bg-[#1e1e1e] text-[#cccccc]">
+    <div
+      className="flex flex-col h-screen select-none overflow-hidden text-sm bg-[#1e1e1e] text-[#cccccc]"
+      onDragOver={(e) => {
+        // This is the CRITICAL fix: preventing default on the entire app window
+        // ensures that individual components can receive drops without the 
+        // global "forbidden" cursor overriding them.
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+      }}
+    >
       {/* Hidden file inputs */}
       <input
         ref={fileInputRef as any}
@@ -389,7 +399,9 @@ const App: React.FC = () => {
               layerStats={layerStats}
               selectedLayerId={selectedLayerId}
               onSelectLayer={setSelectedLayerId}
-              onLayerDrop={handleDrop}
+              onLayerDrop={(draggedId, targetId, position) => {
+                handleDrop(draggedId, targetId, position);
+              }}
               onLayerRemove={(id) => updateLayers(prev => prev.filter(l => l.id !== id && l.groupId !== id))}
               onLayerToggle={(id) => updateLayers(prev => prev.map(l => l.id === id ? { ...l, enabled: !l.enabled } : l))}
               onLayerUpdate={(id, update) => updateLayers(prev => prev.map(l => l.id === id ? { ...l, ...update } : l))}
@@ -445,7 +457,7 @@ const App: React.FC = () => {
                     if (activeFileId) {
                       setProcessedCache(prev => ({
                         ...prev,
-                        [activeFileId]: { ...(prev[activeFileId] || {}), searchMatches: [] }
+                        [activeFileId]: { ...(prev[activeFileId] || {}), searchMatchCount: 0 }
                       }));
                     }
                   }}

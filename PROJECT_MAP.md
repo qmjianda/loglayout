@@ -16,11 +16,13 @@ graph TD
 
 | Module | Location | Responsibility | Dependencies |
 | :--- | :--- | :--- | :--- |
-| **Backend Core** | `backend/bridge.py` | Line indexing, mmap access, **Layer Engine** (filter/highlight), ripgrep interface | `mmap`, `ripgrep`, `re` |
+| **Backend Core** | `backend/bridge.py` | Orchestration, PyQt6 Bridge, File indexing interface | `PyQt6`, `loglayer` |
+| **Unified Logic** | `backend/loglayer/` | **Unified Layer Engine**, UI Schema generator, Plugin discovery, Built-in layers | `re`, `inspect`, `importlib` |
 | **GUI Shell** | `backend/main.py` | PyQt6 Window, WebView, Drag & Drop handler | `bridge.py`, `QWebEngineView` |
-| **Bridge Client** | `frontend/src/bridge_client.ts` | Frontend API, `syncLayers`, `readProcessedLines` | `qwebchannel.js` |
+| **Bridge Client** | `frontend/src/bridge_client.ts` | Frontend API, Registry access, Sync protocols | `qwebchannel.js` |
+| **Dynamic UI** | `frontend/src/components/DynamicUI/` | `InputMapper`, `DynamicForm`: Schema-driven configuration UI | `types.ts` |
 | **Log Viewer** | `frontend/src/components/LogViewer.tsx` | Virtual list, scroll scaling, processed line rendering | `bridge_client.ts` |
-| **State Orchest.** | `frontend/src/App.tsx` | Global file state, layer sync to backend, UI layout | All Components |
+| **State Orchest.** | `frontend/src/App.tsx` | Global file state, UI layout, hook management | All Components |
 
 ## 3. Core Feature List
 - [x] **Large File Loading**: 1GB+ indexing via `mmap` offsets.
@@ -85,3 +87,17 @@ graph TD
 - **Workspace Config Persistence**: Added automatic layer configuration persistence. Layer configurations are now saved to `.loglayer/config.json` in the workspace folder and auto-loaded when reopening the same folder. Implemented via `useWorkspaceConfig` hook with 1-second debounced auto-save.
 - **Standalone Packaging**: Implemented cross-platform one-click offline packaging workflow. Added `package.bat` and `package_exe.bat` for building self-contained Windows distributions. Output includes `LogLayer_Standalone` (Frozen EXE) and bundles `rg` binaries for both platforms. Fixed issue where subprocesses (e.g. `ripgrep`) would pop up console windows by using `CREATE_NO_WINDOW` flags on Windows.
 - **Qt Compatibility Layer**: Introduced `qt_compat.py` to provide a unified API for PyQt6, PySide6, PyQt5, and PySide2. This allows the backend to run on systems with different Qt bindings installed.
+## 7. Change Log (2026-02-01)
+- **Unified Layer Architecture**: Fully migrated all processing logic (Filter, Highlight, Level, etc.) to a unified Python component system.
+- **Python-Driven UI**: Implemented `loglayer.ui` for defining frontend schemas in Python. Frontend now dynamically renders configuration UIs using `InputMapper` and `DynamicForm`.
+- **Plugin System**: Introduced a runtime plugin discovery mechanism that allows adding custom Python layers without modifying frontend code.
+- **Backend Registry**: Centralized layer management in `LayerRegistry`, providing metadata and UI schemas to the frontend via bridge.
+- **Staged Pipeline Implementation**: Added a multi-stage execution model in `PipelineWorker` that chains native `ripgrep` filters with complex Python logic while preserving physical line numbers.
+- **Search Navigation Optimization**: Optimized search result navigation for ultra-large files using on-demand rank-based index fetching.
+- **UI Unification**: Replaced hardcoded configuration components with the new `DynamicUI` engine in `LayersPanel.tsx` and updated `Add Layer` menu in `UnifiedPanel.tsx` to be registry-driven.
+- **Enhanced Icon System**: Implemented a dynamic, registry-driven icon system for layers.
+- **Robust Drag & Drop**: Rewrote `LayersPanel.tsx` drag-and-drop logic with global fallback tracking and hit-test optimization.
+- **Qt/Electron Compatibility**: Fixed the "forbidden" cursor issue in the PyQt6 environment by preventing default drag behavior on the root application window.
+- **Intelligent Reordering**: Improved `useLayerManagement.ts` with circular drop prevention and precise index calculation for complex layer hierarchies.
+- **UI Interaction Polish**: Added drag handles, improved hover effects for sorting, and fixed accidental text selection during drag operations.
+- **Layer Sync Persistence**: Implemented backend `sync_layers` and refined the frontend call to ensure layer order and hierarchy are persisted with the workspace configuration.

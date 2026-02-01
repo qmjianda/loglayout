@@ -8,8 +8,12 @@ import subprocess
 
 import platform
 from pathlib import Path
-from qt_compat import QObject, pyqtSlot, pyqtSignal, QThread, pyqtProperty
+from PyQt6.QtCore import QObject, pyqtSlot, pyqtSignal, QThread, QProcess
+import importlib
 from concurrent.futures import ThreadPoolExecutor
+
+from loglayer.registry import LayerRegistry
+from loglayer.core import LayerStage
 
 def get_creationflags():
     """Returns subprocess creation flags to hide windows on Windows."""
@@ -122,14 +126,15 @@ class IndexingWorker(QThread):
 
 class PipelineWorker(QThread):
     """Processes a chain of filters followed by an optional search in a single pipeline."""
-    finished = pyqtSignal(str, str)  # (indices_json, matches_json)
+    finished = pyqtSignal(object, object)  # (indices_array, matches_array)
+    progress = pyqtSignal(float) # For logic stage processing
     error = pyqtSignal(str)
 
-    def __init__(self, rg_path, file_path, filter_configs, search_config=None):
+    def __init__(self, rg_path, file_path, layers, search_config=None):
         super().__init__()
         self.rg_path = rg_path
         self.file_path = file_path
-        self.filters = filter_configs  # List of {query, regex, caseSensitive}
+        self.layers = layers # List of BaseLayer instances
         self.search = search_config    # {query, regex, caseSensitive}
         self._is_running = True
         self._processes = []
@@ -142,95 +147,144 @@ class PipelineWorker(QThread):
 
     def run(self):
         try:
-            if not self.filters and not self.search:
-                self.finished.emit("null", "[]")
-                return
+            # Stage 1: Native Pipeline (ripgrep)
+            cmd_chain = []
+            
+            # Prepare Native Filters from layers
+            native_layers = [l for l in self.layers if l.stage == LayerStage.NATIVE]
+            
+            # Final search query if present
+            s_args = None
+            if self.search and self.search.get('query'):
+                s_args = []
+                if self.search.get('regex'): s_args.append("-e")
+                else: s_args.append("-F")
+                if not self.search.get('caseSensitive'): s_args.append("-i")
+                s_args.append(self.search['query'])
 
-            procs = []
+            # Build command chain
+            # The FIRST stage always generates line numbers and reads the file
+            # Subsequent stages must preserve the "LINE_NUM:" prefix
             
-            # --- Pipeline Construction ---
-            # Stage 0: The file reader + first filter with line numbers
-            primary = self.filters[0] if self.filters else self.search
-            cmd = [self.rg_path, "--line-number", "--no-heading", "--no-filename", "--color", "never"]
-            if not primary.get('caseSensitive'): cmd.append("-i")
-            if not primary.get('regex'): cmd.append("-F")
-            cmd.extend([primary['query'], self.file_path])
-            
-            print(f"[Pipeline] Start for {self.file_path}, query: {primary.get('query')}, filters: {len(self.filters)}")
-            p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='ignore', creationflags=get_creationflags())
-            procs.append(p)
-            current_stdout = p.stdout
+            # If no native layers and no search, we match all
+            if not native_layers and not s_args:
+                cmd_chain.append([self.rg_path, "--line-number", "--no-heading", "--no-filename", "--color", "never", "", self.file_path])
+            else:
+                for i, layer in enumerate(native_layers):
+                    rg_args = layer.get_rg_args()
+                    if not rg_args: continue
+                    
+                    if i == 0:
+                        # First stage: generates line numbers
+                        cmd_chain.append([self.rg_path, "--line-number", "--no-heading", "--no-filename", "--color", "never"] + rg_args + [self.file_path])
+                    else:
+                        # Piped stages: must wrap and preserve
+                        # We assume the layer provided a simple query or args. 
+                        # For simplicity in this unified architecture, we'll try to extract the query.
+                        # BUT, a better way is to let the layer decide how to wrap itself or 
+                        # have a utility that wraps any rg command to skip prefixes.
+                        
+                        # Legacy-style wrapping (works if rg_args is like ['-i', '-e/F', 'query'])
+                        query = rg_args[-1]
+                        is_regex = "-e" in rg_args
+                        is_case_insensitive = "-i" in rg_args
+                        
+                        pattern = query if is_regex else re.escape(query)
+                        case_flag = "(?i)" if is_case_insensitive else ""
+                        wrapper_pattern = f"^{case_flag}[^:]*:.*{pattern}"
+                        
+                        cmd_chain.append([self.rg_path, "--no-heading", "--no-filename", "--color", "never", wrapper_pattern, "-"])
 
-            # Subsequent Stages: Must skip the "LINE_NUM:" prefix
-            others = self.filters[1:] if self.filters else []
-            for f in others:
-                pattern = f['query'] if f.get('regex') else re.escape(f['query'])
-                case_flag = "(?i)" if not f.get('caseSensitive') else ""
-                wrapper_pattern = f"^{case_flag}[^:]*:.*{pattern}"
-                
-                cmd = [self.rg_path, "--no-heading", "--no-filename", "--color", "never", wrapper_pattern]
-                p = subprocess.Popen(cmd, stdin=current_stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='ignore', creationflags=get_creationflags())
-                procs.append(p)
-                if current_stdout: current_stdout.close()
-                current_stdout = p.stdout
-            
-            self._processes = procs
-            
-            # --- Python-side Search Matching ---
-            search_re = None
-            if self.filters and self.search:
-                flags = re.IGNORECASE if not self.search.get('caseSensitive') else 0
-                pattern = self.search['query'] if self.search.get('regex') else re.escape(self.search['query'])
-                try: 
-                    search_re = re.compile(pattern, flags)
-                    print(f"[Pipeline] Separate search re compiled: {pattern}")
-                except Exception as e: 
-                    print(f"[Pipeline] Search re error: {e}")
+                # Add search as final piped stage if it exists
+                if s_args:
+                    query = s_args[-1]
+                    is_regex = "-e" in s_args
+                    is_case_insensitive = "-i" in s_args
+                    
+                    pattern = query if is_regex else re.escape(query)
+                    case_flag = "(?i)" if is_case_insensitive else ""
+                    wrapper_pattern = f"^{case_flag}[^:]*:.*{pattern}"
+                    
+                    # If this is the ONLY stage, it needs to read the file
+                    if not cmd_chain:
+                        cmd_chain.append([self.rg_path, "--line-number", "--no-heading", "--no-filename", "--color", "never"] + s_args + [self.file_path])
+                    else:
+                        cmd_chain.append([self.rg_path, "--no-heading", "--no-filename", "--color", "never", wrapper_pattern, "-"])
 
+            # ... Execute Pipeline ...
+            self._processes = []
+            last_stdout = None
+            
+            for i, cmd in enumerate(cmd_chain):
+                p = subprocess.Popen(cmd, 
+                                   stdin=last_stdout if i > 0 else None,
+                                   stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE,
+                                   bufsize=1024*1024,
+                                   creationflags=get_creationflags())
+                self._processes.append(p)
+                if i > 0 and last_stdout: last_stdout.close()
+                last_stdout = p.stdout
+
+            # Stage 2: Logical Processing (Python Filters)
+            # Find any logic stage layers
+            logic_layers = [l for l in self.layers if l.stage == LayerStage.LOGIC]
+            
             visible_indices = array.array('I')
             search_matches = array.array('I')
-            v_idx = 0
             
-            for line in procs[-1].stdout:
+            v_idx = 0
+            line_count = 0
+            
+            for line_bytes in last_stdout:
                 if not self._is_running: break
-                parts = line.split(':', 1)
-                if len(parts) >= 2:
-                    l_str = parts[0]
-                    if l_str.isdigit():
-                        real_idx = int(l_str) - 1
-                        visible_indices.append(real_idx)
-                        
-                        # If we have a separate search query, check content only
-                        if search_re:
-                            if search_re.search(parts[1]):
-                                search_matches.append(v_idx)
-                        v_idx += 1
+                line_str = line_bytes.decode('utf-8', errors='ignore')
+                parts = line_str.split(':', 1)
                 
-                # Removed 2M line limit for consistency with stats
+                if len(parts) < 2: continue # Skip malformed lines (e.g., rg errors)
+                
+                try:
+                    physical_idx = int(parts[0]) - 1
+                    content = parts[1]
+                except ValueError:
+                    continue # Skip if line number is not an integer
 
+                # Apply Logic Stage Filters
+                is_visible = True
+                for layer in logic_layers:
+                    if not layer.filter_line(content):
+                        is_visible = False
+                        break
+                
+                if is_visible:
+                    visible_indices.append(physical_idx)
+                    # If we had a separate search query, the rg pipeline already filtered for it.
+                    # So, all lines reaching here are matches.
+                    if self.search and self.search.get('query'):
+                        search_matches.append(v_idx)
+                    v_idx += 1
+                
+                line_count += 1
+                if line_count % 10000 == 0:
+                    self.progress.emit(0) # Keep UI alive
+            
             if self._is_running:
                 print(f"[Pipeline] Finished. Visible: {len(visible_indices)}, Matches: {len(search_matches)}")
-                # Case 1: Search-only (no filters)
-                # We show the full file (indices="null") and highlight the physical line numbers found.
-                if not self.filters and self.search:
-                    self.finished.emit("null", json.dumps(visible_indices.tolist()))
-                # Case 2: Filters (+ optional search)
-                # We show the filtered results and highlight the virtual indices.
-                else:
-                    self.finished.emit(json.dumps(visible_indices.tolist()), json.dumps(search_matches.tolist()))
+                self.finished.emit(visible_indices, search_matches)
         except Exception as e:
             if self._is_running: self.error.emit(str(e))
         finally:
-            for p in procs:
+            for p in self._processes:
                 try: 
                     if p.poll() is None:
                         p.terminate()
                         # Check stderr for the first process if we got no results
-                        if p == procs[0] and len(visible_indices) == 0:
-                            err = p.stderr.read()
+                        if p == self._processes[0] and len(visible_indices) == 0:
+                            err = p.stderr.read().decode('utf-8', errors='ignore')
                             if err: print(f"[Pipeline] rg error: {err.strip()}")
                     p.wait(timeout=0.2)
                 except: pass
+
 
 class StatsWorker(QThread):
     finished = pyqtSignal(str) # JSON map layerId -> {count, distribution}
@@ -258,20 +312,25 @@ class StatsWorker(QThread):
             
             for layer in self.layers:
                 if not self._is_running: break
-                l_id = layer['id']
+                l_id = getattr(layer, 'id', None)
+                if not l_id: continue
                 
                 # We calculate stats for each layer
-                # If it's a FILTER/LEVEL, it contributes to the pipeline for subsequent layers
                 q_conf = None
-                if layer['type'] == 'FILTER':
-                    q = layer['config'].get('query')
-                    if q: q_conf = {'query': q, 'regex': layer['config'].get('regex'), 'caseSensitive': layer['config'].get('caseSensitive')}
-                elif layer['type'] == 'LEVEL':
-                    lvls = layer['config'].get('levels', [])
-                    if lvls: q_conf = {'query': f"\\b({'|'.join(map(re.escape, lvls))})\\b", 'regex': True, 'caseSensitive': True}
-                elif layer['type'] == 'HIGHLIGHT':
-                    q = layer['config'].get('query')
-                    if q: q_conf = {'query': q, 'regex': layer['config'].get('regex'), 'caseSensitive': layer['config'].get('caseSensitive')}
+                
+                # Check for query-based layers
+                if hasattr(layer, 'query') and layer.query:
+                    q_conf = {
+                        'query': layer.query,
+                        'regex': getattr(layer, 'regex', False),
+                        'caseSensitive': getattr(layer, 'caseSensitive', False)
+                    }
+                
+                # Special handling for LEVEL
+                if layer.__class__.__name__ == 'LevelLayer':
+                    lvls = getattr(layer, 'levels', [])
+                    if lvls:
+                         q_conf = {'query': f"\\b({'|'.join(map(re.escape, lvls))})\\b", 'regex': True, 'caseSensitive': True}
 
                 if not q_conf: continue
 
@@ -302,7 +361,7 @@ class StatsWorker(QThread):
                     if not cmd_chain:
                         # Direct count from file
                         final_cmd.append(self.file_path)
-                        p_final = subprocess.Popen(final_cmd, stdout=subprocess.PIPE, text=True, errors='ignore')
+                        p_final = subprocess.Popen(final_cmd, stdout=subprocess.PIPE, text=True, errors='ignore', creationflags=get_creationflags())
                         self._processes.append(p_final)
                     else:
                         # Pipe chain
@@ -349,7 +408,7 @@ class StatsWorker(QThread):
                 results[l_id] = {"count": count, "distribution": norm_dist}
                 
                 # Add to filter chain if it's a filtering layer
-                if layer['enabled'] and layer['type'] in ['FILTER', 'LEVEL']:
+                if getattr(layer, "enabled", True) and layer.__class__.__name__ in ['FilterLayer', 'LevelLayer']:
                     active_filters.append(q_conf)
 
             if self._is_running:
@@ -367,8 +426,10 @@ class LogSession:
         self.mmap = None
         self.size = 0
         self.line_offsets = array.array('Q')
-        self.visible_indices = None
+        self.visible_indices = None # array.array('I')
+        self.search_matches = None # array.array('I')
         self.layers = [] 
+        self.layer_instances = []
         self.search_config = None 
         self.highlight_patterns = []
         self.cache = {}
@@ -403,7 +464,7 @@ class FileBridge(QObject):
     
     # Signals (now include file_id as first argument)
     fileLoaded = pyqtSignal(str, str)  # (file_id, JSON_payload)
-    pipelineFinished = pyqtSignal(str, int, str) # (file_id, newTotal, matchesJson)
+    pipelineFinished = pyqtSignal(str, int, int) # (file_id, newTotal, matchCount)
     statsFinished = pyqtSignal(str, str)  # (file_id, JSON_payload)
     
     operationStarted = pyqtSignal(str, str) # (file_id, opName)
@@ -420,6 +481,10 @@ class FileBridge(QObject):
         self._sessions = {} # file_id -> LogSession
         self._rg_path = self._get_rg_path()
         self._zombie_workers = [] # Keep references to stopping workers
+        
+        plugin_dir = os.path.join(os.getcwd(), "backend", "plugins")
+        self._registry = LayerRegistry(plugin_dir)
+        self._registry.discover_plugins()
 
     def _retire_worker(self, worker):
         """Safely move a worker to the zombie list until it finishes."""
@@ -508,6 +573,7 @@ class FileBridge(QObject):
         session = self._sessions[file_id]
         session.line_offsets = offsets
         session.visible_indices = None
+        session.search_matches = None
         session.cache.clear()
         
         self.fileLoaded.emit(file_id, json.dumps({
@@ -526,26 +592,42 @@ class FileBridge(QObject):
             session.layers = json.loads(layers_json)
             session.search_config = json.loads(search_json) if search_json else None
             
+            # Identify instances for all enabled layers
+            session.layer_instances = []
+            for l_conf in session.layers:
+                if l_conf.get('enabled'):
+                    inst = self._registry.create_layer_instance(l_conf['type'], l_conf['config'])
+                    if inst:
+                        inst.id = l_conf.get('id')
+                        session.layer_instances.append(inst)
+
             # Update highlights immediately for read_processed_lines
             session.highlight_patterns = []
-            for l in session.layers:
-                if l['enabled'] and l['type'] == 'HIGHLIGHT':
-                    c = l['config']
-                    query = c.get('query', '')
+            from loglayer.builtin.highlight import HighlightLayer
+            
+            for inst in session.layer_instances:
+                # Use class name check to be resilient to import differences
+                if inst.__class__.__name__ == 'HighlightLayer':
+                    query = getattr(inst, 'query', '')
                     if not query: continue
                     try:
-                        flags = re.IGNORECASE if not c.get('caseSensitive') else 0
-                        pattern = query if c.get('regex') else re.escape(query)
+                        flags = re.IGNORECASE if not getattr(inst, 'caseSensitive', False) else 0
+                        is_regex = getattr(inst, 'regex', False)
+                        pattern = query if is_regex else re.escape(query)
+                        
+                        # Add word boundary if wholeWord is supported and enabled
+                        if getattr(inst, 'wholeWord', False):
+                            pattern = fr"\b{pattern}\b"
+
                         session.highlight_patterns.append({
                             'regex': re.compile(pattern, flags),
-                            'color': c.get('color', '#ff0000'),
-                            'opacity': c.get('opacity', 100)
+                            'color': getattr(inst, 'color', '#ff0000'),
+                            'opacity': getattr(inst, 'opacity', 100)
                         })
                     except: pass
 
-            # Identify filtering layers
-            filter_configs = self._get_filter_configs(session.layers)
-            self._start_pipeline(file_id, filter_configs)
+            # Start pipeline with instances
+            self._start_pipeline(file_id, session.layer_instances)
             return True
         except Exception as e:
             print(f"Sync all error: {file_id}: {e}")
@@ -571,7 +653,7 @@ class FileBridge(QObject):
                     configs.append({'query': q, 'regex': True, 'caseSensitive': True})
         return configs
 
-    def _start_pipeline(self, file_id, filter_configs):
+    def _start_pipeline(self, file_id, layer_instances):
         if file_id not in self._sessions: return
         session = self._sessions[file_id]
 
@@ -585,43 +667,80 @@ class FileBridge(QObject):
 
         # Start Pipeline
         # If there are no filters and no search, we just emit the full file as filtered.
-        if not filter_configs and not session.search_config:
+        if not layer_instances and not (session.search_config and session.search_config.get('query')):
             session.visible_indices = None
+            session.search_matches = None
             session.cache.clear()
-            self.pipelineFinished.emit(file_id, len(session.line_offsets), "[]")
+            self.pipelineFinished.emit(file_id, len(session.line_offsets), 0)
             self.operationStatusChanged.emit(file_id, "ready", 100)
         else:
             self.operationStarted.emit(file_id, "pipeline")
-            worker = PipelineWorker(self._rg_path, session.path, filter_configs, session.search_config)
+            worker = PipelineWorker(self._rg_path, session.path, layer_instances, session.search_config)
             session.workers['pipeline'] = worker
             worker.finished.connect(lambda indices, matches: self._on_pipeline_finished(file_id, indices, matches))
             worker.error.connect(lambda e: self.operationError.emit(file_id, "pipeline", e))
             worker.start()
 
-        # Start Stats (Parallel or sequential? Let's keep it separate for now)
-        # Only run stats if there are actual layers to analyze
+        # Start Stats (Currently using legacy logic, will unify later)
         if any(l.get('enabled') and l.get('type') in ['HIGHLIGHT', 'FILTER', 'LEVEL'] for l in session.layers):
             stat_worker = StatsWorker(self._rg_path, session.layers, session.path, len(session.line_offsets))
             session.workers['stats'] = stat_worker
-            stat_worker.finished.connect(lambda sj: self.statsFinished.emit(file_id, sj))
+            stat_worker.finished.connect(lambda stats: self.statsFinished.emit(file_id, stats))
             stat_worker.start()
         else:
-            self.statsFinished.emit(file_id, json.dumps({})) # Emit empty stats if no active layers
+            self.statsFinished.emit(file_id, json.dumps({}))
 
-    def _on_pipeline_finished(self, file_id, indices_json, matches_json):
+    @pyqtSlot(result=str)
+    def get_layer_registry(self) -> str:
+        """Returns the available layer types and their schemas."""
+        return json.dumps(self._registry.get_all_types())
+
+    @pyqtSlot(result=bool)
+    def reload_plugins(self) -> bool:
+        """Reloads Python plugins from disk."""
+        self._registry.discover_plugins()
+        return True
+
+    def _on_pipeline_finished(self, file_id, visible_indices, search_matches):
         if file_id not in self._sessions: return
         session = self._sessions[file_id]
         
-        if indices_json == "null":
-            session.visible_indices = None
-            indices_len = len(session.line_offsets)
-        else:
-            session.visible_indices = json.loads(indices_json)
-            indices_len = len(session.visible_indices)
+        session.visible_indices = visible_indices
+        session.search_matches = search_matches
+        
+        # In search-only mode (Case 1), visible_indices is None and search_matches 
+        # contains the physical indices found.
+        # In filtered mode (Case 2), visible_indices contains the virtual->physical mapping,
+        # and search_matches contains the ranks within visible_indices.
+        
+        indices_len = len(visible_indices) if visible_indices is not None else len(session.line_offsets)
+        matches_len = len(search_matches) if search_matches is not None else 0
             
         session.cache.clear()
-        self.pipelineFinished.emit(file_id, indices_len, matches_json)
-        self.operationStatusChanged.emit(file_id, "ready", 100) # Optional status signal
+        self.pipelineFinished.emit(file_id, indices_len, matches_len)
+        self.operationStatusChanged.emit(file_id, "ready", 100)
+
+    @pyqtSlot(str, int, result=int)
+    def get_search_match_index(self, file_id: str, rank: int) -> int:
+        """Returns the virtual index of a specific search match rank."""
+        if file_id not in self._sessions: return -1
+        session = self._sessions[file_id]
+        if session.search_matches is None or rank < 0 or rank >= len(session.search_matches):
+            return -1
+        return session.search_matches[rank]
+
+    @pyqtSlot(str, int, int, result=str)
+    def get_search_matches_range(self, file_id: str, start_rank: int, count: int) -> str:
+        """Returns a list of search match indices for a given rank range."""
+        if file_id not in self._sessions: return "[]"
+        session = self._sessions[file_id]
+        if session.search_matches is None: return "[]"
+        
+        start = max(0, start_rank)
+        end = min(len(session.search_matches), start + count)
+        if start >= end: return "[]"
+        
+        return json.dumps(session.search_matches[start:end].tolist())
         
     @pyqtSlot(str, int, int, result=str)
     def read_processed_lines(self, file_id: str, start_line: int, count: int) -> str:
@@ -713,9 +832,8 @@ class FileBridge(QObject):
         else:
             session.search_config = {"query": query, "regex": regex, "caseSensitive": case_sensitive}
         
-        # Identify filtering layers
-        filter_configs = self._get_filter_configs(session.layers)
-        self._start_pipeline(file_id, filter_configs)
+        # Trigger pipeline with the latest instances
+        self._start_pipeline(file_id, session.layer_instances)
         return True
 
     @pyqtSlot(str)

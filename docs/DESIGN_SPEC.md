@@ -16,6 +16,16 @@
     4. JS `App.tsx` updates `files` state -> Sets active file.
     5. `LogViewer` computes viewport -> Calls `bridge_client.readLines`.
 
-## 3. Modification Guidelines
+## 3. Unified Layer Architecture
+- **Concept**: A single source of truth for both logic and UI. Every layer is a Python class defining its `stage` (Native/Logic/Decor) and its `ui_schema`.
+- **Schema Engine**: `loglayer.ui` defines primitive types (`StrInput`, `ColorPicker`, etc.) that map to React components in the frontend.
+- **Pipeline Stages**:
+    1. **Native (ripgrep)**: Fast line filtering using piped OS processes. 
+    2. **Logic (Python)**: Complex line content modification and metadata generation.
+    3. **Decor (Metadata)**: Post-processing for UI attributes (colors, highlights).
+- **Extensibility**: Custom plugins can be placed in `backend/plugins/` and are automatically registered and UI-rendered at startup.
+
+## 4. Modification Guidelines
 - **UI Safety**: All numerical displays (lines, sizes) MUST have null/undefined fallbacks.
 - **Backend Stability**: Python methods must catch all I/O exceptions and return `bool` or empty strings to prevent bridge hangs.
+- **Schema Parity**: When adding new `ui_schema` types, ensure a corresponding component exists in `frontend/src/components/DynamicUI/InputMapper.tsx`.

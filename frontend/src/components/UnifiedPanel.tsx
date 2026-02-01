@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { LogLayer, LayerType, LayerPreset } from '../types';
+import { LogLayer, LayerType, LayerPreset, LayerRegistryEntry } from '../types';
 import { LayersPanel } from './LayersPanel';
 import { FileTree } from './FileTree';
+import { useLayerRegistry } from '../hooks/useLayerRegistry';
 
 // 文件信息接口
 export interface FileInfo {
@@ -144,15 +145,24 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
         return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
     };
 
-    // Layer type definitions for dropdown menu
-    const layerTypes = [
-        { type: LayerType.FILTER, label: '过滤', icon: <svg className="w-3.5 h-3.5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M3 4h18l-7 9v6l-4 2V13L3 4z" strokeWidth="2" /></svg> },
-        { type: LayerType.HIGHLIGHT, label: '高亮', icon: <svg className="w-3.5 h-3.5 text-yellow-400" fill="currentColor" viewBox="0 0 24 24"><path d="M12 21a9 9 0 110-18 9 9 0 010 18z" /></svg> },
-        { type: LayerType.LEVEL, label: '等级', icon: <svg className="w-3.5 h-3.5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg> },
-        { type: LayerType.TIME_RANGE, label: '时间', icon: <svg className="w-3.5 h-3.5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> },
-        { type: LayerType.RANGE, label: '范围', icon: <svg className="w-3.5 h-3.5 text-teal-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2.5" d="M7 8l-4 4 4 4M17 8l4 4-4 4M13 4l-2 16" /></svg> },
-        { type: LayerType.TRANSFORM, label: '转换', icon: <svg className="w-3.5 h-3.5 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2.5" d="M4 4h16v16H4V4zm4 4h8v8H8V8z" /></svg> },
-    ];
+    const { registry } = useLayerRegistry();
+
+    // Shared icon library
+    const ICON_LIBRARY: Record<string, React.ReactNode> = {
+        filter: <svg className="w-3.5 h-3.5 text-blue-400" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M3 4h18l-7 9v6l-4 2V13L3 4z" /></svg>,
+        highlight: <svg className="w-3.5 h-3.5 text-yellow-400" fill="currentColor" viewBox="0 0 24 24"><path d="M12 21a9 9 0 110-18 9 9 0 010 18z" /></svg>,
+        range: <svg className="w-3.5 h-3.5 text-teal-400" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M7 8l-4 4 4 4M17 8l4 4-4 4M13 4l-2 16" /></svg>,
+        time: <svg className="w-3.5 h-3.5 text-purple-400" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
+        transform: <svg className="w-3.5 h-3.5 text-orange-400" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M4 4h16v16H4V4zm4 4h8v8H8V8z" /></svg>,
+        level: <svg className="w-3.5 h-3.5 text-red-400" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>,
+        plugin: <svg className="w-3.5 h-3.5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z" /></svg>,
+        default: <svg className="w-3.5 h-3.5 text-gray-500" fill="currentColor" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
+    };
+
+    const getIcon = (entry: LayerRegistryEntry) => {
+        return ICON_LIBRARY[entry.icon] || (entry.is_builtin ? ICON_LIBRARY.default : ICON_LIBRARY.plugin);
+    };
+
 
     // Render dropdown menu for adding layers
     const renderAddMenu = (fileId: string) => (
@@ -160,22 +170,45 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
             ref={menuRef}
             className="absolute right-0 top-full mt-1 w-40 bg-[#252526] border border-[#454545] shadow-2xl rounded py-1 z-[100] animate-in fade-in zoom-in-95 duration-100"
         >
-            <div className="px-3 py-1.5 text-[9px] uppercase font-black text-gray-500 tracking-wider bg-[#2d2d2d] border-b border-[#333]">基础图层</div>
-            {layerTypes.map(t => (
+            {/* Built-in Layers */}
+            <div className="px-3 py-1.5 text-[9px] uppercase font-black text-gray-500 tracking-wider bg-[#2d2d2d] border-b border-[#333]">核心图层</div>
+            {Object.values(registry as Record<string, LayerRegistryEntry>).filter(entry => entry.is_builtin).map(entry => (
                 <button
-                    key={t.type}
+                    key={entry.type}
                     onMouseDown={(e) => {
                         e.stopPropagation();
-                        onAddLayer(t.type);
+                        onAddLayer(entry.type);
                         setActiveMenuId(null);
                         setExpandedFiles(prev => ({ ...prev, [fileId]: true }));
                     }}
                     className="w-full flex items-center px-3 py-1.5 text-[11px] text-gray-300 hover:bg-blue-600 hover:text-white transition-colors"
                 >
-                    <span className="mr-3 w-4 flex justify-center shrink-0">{t.icon}</span>
-                    <span className="truncate text-left">{t.label}</span>
+                    <span className="mr-3 w-4 flex justify-center shrink-0">{getIcon(entry)}</span>
+                    <span className="truncate text-left">{entry.display_name}</span>
                 </button>
             ))}
+
+            {/* Plugin Layers */}
+            {Object.values(registry as Record<string, LayerRegistryEntry>).some(entry => !entry.is_builtin) && (
+                <>
+                    <div className="px-3 py-1.5 text-[9px] uppercase font-black text-gray-500 tracking-wider bg-[#2d2d2d] border-y border-[#333] mt-1">扩展插件</div>
+                    {Object.values(registry as Record<string, LayerRegistryEntry>).filter(entry => !entry.is_builtin).map(entry => (
+                        <button
+                            key={entry.type}
+                            onMouseDown={(e) => {
+                                e.stopPropagation();
+                                onAddLayer(entry.type);
+                                setActiveMenuId(null);
+                                setExpandedFiles(prev => ({ ...prev, [fileId]: true }));
+                            }}
+                            className="w-full flex items-center px-3 py-1.5 text-[11px] text-gray-300 hover:bg-blue-600 hover:text-white transition-colors"
+                        >
+                            <span className="mr-3 w-4 flex justify-center shrink-0">{getIcon(entry)}</span>
+                            <span className="truncate text-left">{entry.display_name}</span>
+                        </button>
+                    ))}
+                </>
+            )}
 
             {presets.length > 0 && (
                 <>

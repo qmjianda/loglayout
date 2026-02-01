@@ -19,7 +19,7 @@ export interface UseSearchProps {
     layers: LogLayer[];
     layersFunctionalHash: string;
     lineCount: number;
-    bridgedMatches: number[];
+    searchMatchCount: number;
     setProcessedCache: React.Dispatch<React.SetStateAction<Record<string, any>>>;
 }
 
@@ -31,8 +31,9 @@ export interface UseSearchReturn {
     setSearchConfig: React.Dispatch<React.SetStateAction<SearchConfig>>;
 
     // Match state
+    currentMatchRank: number;
+    setCurrentMatchRank: (rank: number) => void;
     currentMatchIndex: number;
-    setCurrentMatchIndex: (index: number) => void;
     isSearching: boolean;
     setIsSearching: (searching: boolean) => void;
 
@@ -41,7 +42,7 @@ export interface UseSearchReturn {
     currentMatchNumber: number;
 
     // Operations
-    findNextSearchMatch: (direction: 'next' | 'prev') => number;
+    findNextSearchMatch: (direction: 'next' | 'prev') => Promise<number>;
     clearSearch: () => void;
 }
 
@@ -50,7 +51,7 @@ export function useSearch({
     layers,
     layersFunctionalHash,
     lineCount,
-    bridgedMatches,
+    searchMatchCount,
     setProcessedCache
 }: UseSearchProps): UseSearchReturn {
     const [searchQuery, setSearchQuery] = useState('');
@@ -59,6 +60,7 @@ export function useSearch({
         caseSensitive: false,
         wholeWord: false
     });
+    const [currentMatchRank, setCurrentMatchRank] = useState(-1);
     const [currentMatchIndex, setCurrentMatchIndex] = useState(-1);
     const [isSearching, setIsSearching] = useState(false);
     const [isLayerProcessing, setIsLayerProcessing] = useState(false);
@@ -76,12 +78,13 @@ export function useSearch({
 
             if (searchQuery) {
                 setIsSearching(true);
+                setCurrentMatchRank(-1);
                 setCurrentMatchIndex(-1);
 
                 // Clear current matches to indicate loading
                 setProcessedCache(prev => ({
                     ...prev,
-                    [activeFileId]: { ...prev[activeFileId], searchMatches: [] }
+                    [activeFileId]: { ...prev[activeFileId], searchMatchCount: 0 }
                 }));
             }
 
@@ -89,6 +92,7 @@ export function useSearch({
 
             if (!searchQuery) {
                 setIsSearching(false);
+                setCurrentMatchRank(-1);
                 setCurrentMatchIndex(-1);
             }
 
@@ -98,50 +102,38 @@ export function useSearch({
         return () => clearTimeout(timer);
     }, [layersFunctionalHash, searchQuery, searchConfig, activeFileId, lineCount]);
 
-    // Search match count
-    const searchMatchCount = useMemo(() => {
-        return bridgedMatches.length;
-    }, [bridgedMatches]);
-
     // Current match number (1-indexed position)
     const currentMatchNumber = useMemo(() => {
-        if (currentMatchIndex === -1 || !searchQuery) return 0;
-        const idx = bridgedMatches.indexOf(currentMatchIndex);
-        return idx !== -1 ? idx + 1 : 0;
-    }, [currentMatchIndex, searchQuery, bridgedMatches]);
+        if (currentMatchRank === -1 || !searchQuery) return 0;
+        return currentMatchRank + 1;
+    }, [currentMatchRank, searchQuery]);
 
     // Find next/prev match
-    const findNextSearchMatch = useCallback((direction: 'next' | 'prev'): number => {
-        if (!searchQuery || bridgedMatches.length === 0) return -1;
+    const findNextSearchMatch = useCallback(async (direction: 'next' | 'prev'): Promise<number> => {
+        if (!searchQuery || searchMatchCount === 0 || !activeFileId) return -1;
 
-        let nextIdx = -1;
-        const currentPos = currentMatchIndex !== -1 ? currentMatchIndex : -1;
-
+        let nextRank = -1;
         if (direction === 'next') {
-            const found = bridgedMatches.find(m => m > currentPos);
-            nextIdx = found !== undefined ? found : bridgedMatches[0];
+            nextRank = (currentMatchRank + 1) % searchMatchCount;
         } else {
-            // Optimized backward search
-            for (let i = bridgedMatches.length - 1; i >= 0; i--) {
-                if (bridgedMatches[i] < currentPos) {
-                    nextIdx = bridgedMatches[i];
-                    break;
-                }
-            }
-            // Wrap around to the last match
-            if (nextIdx === -1) nextIdx = bridgedMatches[bridgedMatches.length - 1];
+            nextRank = (currentMatchRank - 1 + searchMatchCount) % searchMatchCount;
         }
 
-        if (nextIdx !== -1) {
-            setCurrentMatchIndex(nextIdx);
+        if (nextRank !== -1) {
+            setCurrentMatchRank(nextRank);
+            const { getSearchMatchIndex } = await import('../bridge_client');
+            const index = await getSearchMatchIndex(activeFileId, nextRank);
+            setCurrentMatchIndex(index);
+            return index;
         }
 
-        return nextIdx;
-    }, [searchQuery, bridgedMatches, currentMatchIndex]);
+        return -1;
+    }, [searchQuery, searchMatchCount, currentMatchRank, activeFileId]);
 
     // Clear search
     const clearSearch = useCallback(() => {
         setSearchQuery('');
+        setCurrentMatchRank(-1);
         setCurrentMatchIndex(-1);
         setIsSearching(false);
     }, []);
@@ -151,8 +143,9 @@ export function useSearch({
         setSearchQuery,
         searchConfig,
         setSearchConfig,
+        currentMatchRank,
+        setCurrentMatchRank,
         currentMatchIndex,
-        setCurrentMatchIndex,
         isSearching,
         setIsSearching,
         searchMatchCount,

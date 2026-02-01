@@ -34,7 +34,7 @@ export interface Pane {
 // Processed cache per file
 export interface ProcessedCache {
     layerStats: Record<string, { count: number; distribution: number[] }>;
-    searchMatches: number[];
+    searchMatchCount: number;
 }
 
 // Global counts cache (replacing window._BRIDGED_COUNTS)

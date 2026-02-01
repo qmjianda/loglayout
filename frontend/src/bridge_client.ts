@@ -1,61 +1,11 @@
+import { FileBridgeAPI } from './types';
+
 // @ts-ignore
 declare const QWebChannel: any;
 
-// Bridge API interface (Matching bridge.py Multi-Session)
-export interface FileBridgeAPI {
-    // File operations
-    open_file: (fileId: string, path: string) => Promise<boolean>;
-    select_files: () => Promise<string>;
-    select_folder: () => Promise<string>;
-    list_logs_in_folder: (folderPath: string) => Promise<string>;
-    list_directory: (folderPath: string) => Promise<string>;
-    save_workspace_config: (folderPath: string, configJson: string) => Promise<boolean>;
-    load_workspace_config: (folderPath: string) => Promise<string>;
-    ready: () => Promise<void>;
-
-
-    close_file: (fileId: string) => Promise<void>;
-
-    // Line reading (Processed with highlights/filter)
-    read_processed_lines: (fileId: string, start: number, count: number) => Promise<string>;
-
-    // Layer and pipeline management
-    sync_layers: (fileId: string, layersJson: string) => Promise<boolean>;
-    sync_all: (fileId: string, layersJson: string, searchJson: string) => Promise<boolean>;
-
-    // Search
-    search_ripgrep: (fileId: string, query: string, regex: boolean, caseSensitive: boolean) => Promise<boolean>;
-
-    // Signals (Taking fileId as first argument)
-    fileLoaded: {
-        connect: (callback: (fileId: string, payloadJson: string) => void) => void;
-    };
-    pipelineFinished: {
-        connect: (callback: (fileId: string, newTotal: number, matchesJson: string) => void) => void;
-    };
-    statsFinished: {
-        connect: (callback: (fileId: string, statsJson: string) => void) => void;
-    };
-
-    operationStarted: {
-        connect: (callback: (fileId: string, op: string) => void) => void;
-    };
-    operationProgress: {
-        connect: (callback: (fileId: string, op: string, progress: number) => void) => void;
-    };
-    operationError: {
-        connect: (callback: (fileId: string, op: string, message: string) => void) => void;
-    };
-    pendingFilesCount: {
-        connect: (callback: (count: number) => void) => void;
-    };
-    frontendReady: {
-        connect: (callback: () => void) => void;
-    };
-}
-
 // Global bridge instance
 let fileBridge: FileBridgeAPI | null = null;
+let initPromise: Promise<FileBridgeAPI | null> | null = null;
 
 export async function readProcessedLines(fileId: string, start: number, count: number): Promise<any[]> {
     if (!fileBridge) return [];
@@ -63,7 +13,7 @@ export async function readProcessedLines(fileId: string, start: number, count: n
         const jsonStr = await fileBridge.read_processed_lines(fileId, start, count);
         return JSON.parse(jsonStr) as any[];
     } catch (e) {
-        console.error(`Failed to read processed lines for ${fileId}:`, e);
+        console.error(`Failed to read processed lines for ${fileId}: `, e);
         return [];
     }
 }
@@ -73,7 +23,7 @@ export async function syncLayers(fileId: string, layers: any[]): Promise<void> {
     try {
         await fileBridge.sync_layers(fileId, JSON.stringify(layers));
     } catch (e) {
-        console.error(`Failed to sync layers for ${fileId}:`, e);
+        console.error(`Failed to sync layers for ${fileId}: `, e);
     }
 }
 
@@ -82,7 +32,7 @@ export async function syncAll(fileId: string, layers: any[], search: any): Promi
     try {
         await fileBridge.sync_all(fileId, JSON.stringify(layers), JSON.stringify(search));
     } catch (e) {
-        console.error(`Failed to sync all for ${fileId}:`, e);
+        console.error(`Failed to sync all for ${fileId}: `, e);
     }
 }
 
@@ -96,8 +46,38 @@ export async function searchRipgrep(
     try {
         return await fileBridge.search_ripgrep(fileId, query, regex, caseSensitive);
     } catch (e) {
-        console.error(`Search failed for ${fileId}:`, e);
+        console.error(`Search failed for ${fileId}: `, e);
         return false;
+    }
+}
+
+export async function getSearchMatchIndex(fileId: string, rank: number): Promise<number> {
+    if (!fileBridge) return -1;
+    return await fileBridge.get_search_match_index(fileId, rank);
+}
+
+export async function getLayerRegistry(): Promise<string> {
+    const bridge = await ensureBridge();
+    if (!bridge) return "[]";
+    return await bridge.get_layer_registry();
+}
+
+export async function reloadPlugins(): Promise<boolean> {
+    if (!fileBridge) return false;
+    return await fileBridge.reload_plugins();
+}
+
+export function signalReady(): void {
+    if (fileBridge) fileBridge.ready();
+}
+
+export async function getSearchMatchesRange(fileId: string, startRank: number, count: number): Promise<number[]> {
+    if (!fileBridge) return [];
+    try {
+        const json = await fileBridge.get_search_matches_range(fileId, startRank, count);
+        return JSON.parse(json);
+    } catch (e) {
+        return [];
     }
 }
 
@@ -181,8 +161,10 @@ export async function loadWorkspaceConfig(folderPath: string): Promise<Workspace
     }
 }
 
-export const initBridge = (): Promise<FileBridgeAPI | null> => {
-    return new Promise((resolve) => {
+export const ensureBridge = (): Promise<FileBridgeAPI | null> => {
+    if (fileBridge) return Promise.resolve(fileBridge);
+    if (initPromise) return initPromise;
+    initPromise = new Promise((resolve) => {
         const setupChannel = () => {
             if (typeof window.qt !== 'undefined' && window.qt.webChannelTransport) {
                 new QWebChannel(window.qt.webChannelTransport, (channel: any) => {
@@ -199,7 +181,7 @@ export const initBridge = (): Promise<FileBridgeAPI | null> => {
                         } else {
                             // If callback is missing or invalid, clean up and ignore
                             delete channel.execCallbacks[data.id];
-                            console.warn(`[Bridge] Suppressed invalid callback for msg ${data.id}. Type: ${typeof callback}`);
+                            console.warn(`[Bridge] Suppressed invalid callback for msg ${data.id}. Type: ${typeof callback} `);
                         }
                     };
 
@@ -225,7 +207,11 @@ export const initBridge = (): Promise<FileBridgeAPI | null> => {
             }, 100);
         }
     });
+    return initPromise;
 };
+
+// Compatibility export
+export const initBridge = ensureBridge;
 
 declare global {
     interface Window {
