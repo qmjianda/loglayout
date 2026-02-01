@@ -2,20 +2,30 @@ import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { LogLine, LayerType } from '../types';
 import { readProcessedLines } from '../bridge_client';
 
+/**
+ * LogViewer - 核心日志渲染组件
+ * 
+ * 关键特性：
+ * 1. 虚拟滚动 (Virtual Scrolling): 只渲染视口内的行，支持超大文件（GB 级）。
+ * 2. 滚动缩放 (Scroll Scaling): 绕过浏览器 ~33M 像素的高度限制，支持千万行日志。
+ * 3. 异步加载: 通过桥接层按需从 Python 后端拉取处理后的行数据。
+ * 4. 高亮渲染: 支持多重着色方案（搜索匹配、图层高亮）。
+ */
+
 interface LogViewerProps {
-  // Data source
-  totalLines: number;
+  // 数据源信息
+  totalLines: number; // 当前可见的总行数（过滤后的）
   fileId: string | null;
 
-  // Interaction
+  // 交互控制
   searchQuery: string;
   searchConfig: { regex: boolean; caseSensitive: boolean; wholeWord?: boolean };
-  scrollToIndex?: number | null;
-  highlightedIndex?: number | null;
+  scrollToIndex?: number | null; // 强制滚动到某一行
+  highlightedIndex?: number | null; // 当前高亮的行索引（虚拟索引）
   onLineClick?: (index: number) => void;
   onAddLayer?: (type: LayerType, config?: any) => void;
   onVisibleRangeChange?: (startIndex: number, endIndex: number) => void;
-  updateTrigger?: number;
+  updateTrigger?: number; // 外部触发器，用于强制刷新缓存
 }
 
 export const LogViewer: React.FC<LogViewerProps> = ({
@@ -35,30 +45,31 @@ export const LogViewer: React.FC<LogViewerProps> = ({
   const [viewportHeight, setViewportHeight] = useState(0);
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, text: string } | null>(null);
 
-  // Lines fetched from bridge for current viewport
+  // 本地缓存：存储从后端读取的行数据
   const [bridgedLines, setBridgedLines] = useState<Map<number, LogLine | string>>(new Map());
   const lastFetchRef = useRef<{ start: number; end: number }>({ start: -1, end: -1 });
 
-  const lineHeight = 20;
-  const buffer = 50;
-  const VIRTUAL_HEIGHT_LIMIT = 10000000; // 10M pixels limit for safety, browser limit is ~33M
+  const lineHeight = 20; // 每一行的高度
+  const buffer = 50;     // 缓冲区行数，避免滚动太快时看到空白
+  const VIRTUAL_HEIGHT_LIMIT = 10000000; // 虚拟高度上限 (1000万像素)，超过此高度开启缩放模式
 
   const realTotalHeight = totalLines * lineHeight;
   const useScrollScaling = realTotalHeight > VIRTUAL_HEIGHT_LIMIT;
+  // 缩放因子：将庞大的实际高度映射到有限的浏览器显示高度
   const scaleFactor = useScrollScaling ? VIRTUAL_HEIGHT_LIMIT / realTotalHeight : 1;
   const virtualTotalHeight = useScrollScaling ? VIRTUAL_HEIGHT_LIMIT : realTotalHeight;
 
-  // Clear internal cache when external trigger fires (e.g. layers sync or search clear)
+  // 当外部触发器改变（如清空搜索、切换图层）时，清空本地缓存
   useEffect(() => {
     setBridgedLines(new Map());
     lastFetchRef.current = { start: -1, end: -1 };
   }, [updateTrigger, fileId]);
 
-  // Calculate visible range with scaling support
+  // 计算可见范围（考虑缩放模式）
   const maxPhysicalScroll = virtualTotalHeight - viewportHeight;
   const maxLogicalScroll = realTotalHeight - viewportHeight;
 
-  // Linear mapping: scrollTop / maxPhysicalScroll = effectiveScrollTop / maxLogicalScroll
+  // 核心公式：将 DOM 的 scrollTop 映射到逻辑上的有效滚动位置
   const effectiveScrollTop = useScrollScaling && maxPhysicalScroll > 0
     ? (scrollTop / maxPhysicalScroll) * maxLogicalScroll
     : scrollTop;
@@ -66,11 +77,13 @@ export const LogViewer: React.FC<LogViewerProps> = ({
   const startIndex = Math.max(0, Math.floor(effectiveScrollTop / lineHeight) - buffer);
   const endIndex = Math.min(totalLines, Math.floor((effectiveScrollTop + viewportHeight) / lineHeight) + buffer);
 
-  // Fetch lines from bridge when viewport changes
+  /**
+   * 按需从后端拉取行数据。
+   */
   useEffect(() => {
     if (!fileId || totalLines === 0) return;
 
-    // Debounce and avoid duplicate fetches
+    // 避免重复请求相同的范围
     const fetchStart = startIndex;
     const fetchEnd = endIndex;
 
@@ -84,6 +97,7 @@ export const LogViewer: React.FC<LogViewerProps> = ({
       try {
         const count = fetchEnd - fetchStart;
         if (count <= 0) return;
+        // batch 读取：一次性拉取整个可见窗口的内容
         const lines = await readProcessedLines(fileId, fetchStart, count);
 
         setBridgedLines(prev => {
@@ -92,7 +106,7 @@ export const LogViewer: React.FC<LogViewerProps> = ({
             next.set(fetchStart + idx, line);
           });
 
-          // Limit cache size
+          // 缓存淘汰逻辑：当 Map 过大时，移除最早的 2000 行，保持性能
           if (next.size > 5000) {
             const keys = Array.from(next.keys()).sort((a, b) => Number(a) - Number(b));
             const toRemove = keys.slice(0, 2000);
@@ -104,17 +118,17 @@ export const LogViewer: React.FC<LogViewerProps> = ({
       } catch (e) {
         console.error('Failed to fetch lines:', e);
       }
-    }, 10);
+    }, 10); // 微调延时，防止高频滚动导致请求堆积
 
     return () => clearTimeout(timer);
   }, [startIndex, endIndex, fileId, totalLines, updateTrigger]);
 
-  // Get line content
+  // 从本地缓存获取一行内容
   const getLine = useCallback((index: number): LogLine | string => {
     return bridgedLines.get(index) || '';
   }, [bridgedLines]);
 
-  // Resize observer
+  // 监听容器大小变化
   useEffect(() => {
     const handleResize = () => {
       if (containerRef.current) {
@@ -126,7 +140,10 @@ export const LogViewer: React.FC<LogViewerProps> = ({
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Scroll to index
+  /**
+   * 跳转到指定行。
+   * 会自动计算相应的逻辑滚动位置和缩放后的物理滚动位置。
+   */
   useEffect(() => {
     if (scrollToIndex !== null && scrollToIndex !== undefined && containerRef.current) {
       const maxPhysicalScroll = virtualTotalHeight - viewportHeight;
@@ -139,18 +156,18 @@ export const LogViewer: React.FC<LogViewerProps> = ({
     }
   }, [scrollToIndex, totalLines, viewportHeight, useScrollScaling, scaleFactor]);
 
-  // Fix scroll speed for large files (Scaling Mode)
+  /**
+   * 修复缩放模式下的滚动手感。
+   * 在缩放模式下（大文件），正常的滚轮步进会被缩小太多，导致滚动极其缓慢。
+   * 这里拦截 wheel 事件，根据缩放因子补偿滚动增量。
+   */
   useEffect(() => {
     const container = containerRef.current;
     if (!container || !useScrollScaling) return;
 
     const handleWheel = (e: WheelEvent) => {
-      // Only override vertical scrolling when in scaling mode
       if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
         e.preventDefault();
-        // The goal is to move the EFFECTIVE scroll by e.deltaY pixels.
-        // Since effectiveScroll = scrollTop / scaleFactor,
-        // we need d(scrollTop) = d(effectiveScroll) * scaleFactor
         container.scrollTop += e.deltaY * scaleFactor;
       }
     };
@@ -159,7 +176,7 @@ export const LogViewer: React.FC<LogViewerProps> = ({
     return () => container.removeEventListener('wheel', handleWheel);
   }, [useScrollScaling, scaleFactor]);
 
-  // Context menu handling
+  // 处理文本选择弹窗（右键菜单的简易实现）
   const handleMouseUp = () => {
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed) return;
@@ -181,18 +198,22 @@ export const LogViewer: React.FC<LogViewerProps> = ({
     return () => window.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Notify parent of visible range
+  // 通知父组件当前的可见范围（可用于同步统计等）
   useEffect(() => {
     onVisibleRangeChange?.(startIndex, endIndex);
   }, [startIndex, endIndex, onVisibleRangeChange]);
 
-  // Render line content
+  /**
+   * 渲染带高亮的每一行内容。
+   * 将 backend 返回的高亮段 (start, end, color) 进行分段渲染。
+   */
   const renderLineContent = (line: LogLine | string) => {
     if (typeof line === 'string') return <span>{line}</span>;
     if (!line) return <span></span>;
     const content = line.displayContent || line.content || '';
     if (!line.highlights || line.highlights.length === 0) return <span>{content}</span>;
 
+    // 按起始位置排序
     const sorted = [...line.highlights].sort((a, b) => a.start - b.start || b.end - a.end);
     const elements: React.ReactNode[] = [];
     let lastIndex = 0;
@@ -206,7 +227,7 @@ export const LogViewer: React.FC<LogViewerProps> = ({
       }
       const opacity = (h.opacity || 100) / 100;
       const end = Math.min(h.end, content.length);
-      // For search results, use dark text for better contrast on yellow backgrounds
+      // 如果是搜索命中或者是特定黄色，使用深色文字以保证对比度
       const isSearchMatch = (h as any).isSearch || h.color === '#facc15';
       elements.push(
         <span key={`h-${i}`} style={{
@@ -225,7 +246,7 @@ export const LogViewer: React.FC<LogViewerProps> = ({
     return elements;
   };
 
-  // Build visible lines
+  // 生成可见行列表
   const visibleLines: (LogLine | string)[] = [];
   for (let i = startIndex; i < endIndex; i++) {
     visibleLines.push(getLine(i));
@@ -238,7 +259,9 @@ export const LogViewer: React.FC<LogViewerProps> = ({
       onMouseUp={handleMouseUp}
       className="flex-1 overflow-auto bg-[#1e1e1e] font-mono text-[12px] relative custom-scrollbar"
     >
+      {/* 虚拟高度占位层 */}
       <div style={{ height: `${virtualTotalHeight}px`, width: '100%', position: 'relative' }}>
+        {/* 内容吸附层：通过 translate3d 实现高性能的平滑移动 */}
         <div
           className="absolute top-0 left-0 min-w-full w-fit will-change-transform"
           style={{
@@ -254,6 +277,7 @@ export const LogViewer: React.FC<LogViewerProps> = ({
 
             const isHighlighted = highlightedIndex === absoluteIdx;
             const isLogLine = line && typeof line !== 'string';
+            // originalIndex 表示在原始物理文件中的行号
             const originalIndex = line ? (isLogLine ? (line as LogLine).index : absoluteIdx) : absoluteIdx;
             const isMarked = isLogLine && (line as LogLine).isMarked;
 
@@ -265,6 +289,7 @@ export const LogViewer: React.FC<LogViewerProps> = ({
                   ${isMarked ? 'border-yellow-500' : 'border-transparent'}
                   ${isHighlighted ? 'bg-blue-500/20' : ''}`}
               >
+                {/* 行号栏：显示虚拟行号和物理行号 (#) */}
                 <div className={`w-20 text-right pr-4 shrink-0 select-none text-[10px] flex flex-col justify-center items-end leading-[9px] ${isHighlighted ? 'text-blue-400 font-semibold' : 'text-gray-600'}`}>
                   <span>{(absoluteIdx + 1).toLocaleString()}</span>
                   <span className={`text-[8px] mt-0.5 font-normal tracking-tighter opacity-0 group-hover:opacity-40 ${isHighlighted ? 'opacity-40' : ''} transition-opacity duration-300`}>
@@ -278,6 +303,7 @@ export const LogViewer: React.FC<LogViewerProps> = ({
         </div>
       </div>
 
+      {/* 快速菜单组件（选中文字时出现的浮窗） */}
       {contextMenu && (
         <div
           style={{ position: 'fixed', top: contextMenu.y, left: contextMenu.x, transform: 'translateX(-50%)', zIndex: 1000 }}

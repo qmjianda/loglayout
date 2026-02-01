@@ -1,8 +1,9 @@
 import os
 import sys
 
-# Qt Compatibility Layer for LogLayer
-# Supports PyQt6, PySide6, PyQt5, PySide2 in order of preference
+# Qt 兼容层 (Qt Compatibility Layer)
+# 支持按优先级顺序自动检测并加载：PyQt6, PySide6, PyQt5, PySide2
+# 这确保了 LogLayer 可以在不同的 Python GUI 环境中运行
 
 QT_API = None
 QT_API_PYQT6 = "PyQt6"

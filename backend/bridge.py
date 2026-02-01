@@ -64,9 +64,13 @@ def get_directory_contents(folder_path):
     return items
 
 class IndexingWorker(QThread):
-    finished = pyqtSignal(object)  # array.array('Q')
-    progress = pyqtSignal(float)
-    error = pyqtSignal(str)
+    """
+    索引工作线程。
+    扫描文件中的换行符 (\n)，记录每一行起始位置的文件偏移量。
+    """
+    finished = pyqtSignal(object)  # 完成信号，发送 array.array('Q') (偏移量数组)
+    progress = pyqtSignal(float)   # 进度信号 (0-100)
+    error = pyqtSignal(str)        # 错误信号
 
     def __init__(self, mmap_obj, size):
         super().__init__()
@@ -79,6 +83,7 @@ class IndexingWorker(QThread):
 
     def run(self):
         try:
+            # 使用多线程并行扫描文件（大文件提速明显）
             num_threads = min(os.cpu_count() or 4, 8)
             chunk_size = self.size // num_threads
             
@@ -99,10 +104,12 @@ class IndexingWorker(QThread):
             
             if not self._is_running: return
 
-            total_offsets = array.array('Q', [0])
+            # 合并各分块扫描到的偏移量
+            total_offsets = array.array('Q', [0]) # 第一行的偏移量总是 0
             for chunk_offsets in results:
                 total_offsets.extend(chunk_offsets)
             
+            # 修正末尾多余的换行符
             if len(total_offsets) > 1 and total_offsets[-1] >= self.size:
                 total_offsets.pop()
                 
@@ -111,6 +118,7 @@ class IndexingWorker(QThread):
             self.error.emit(str(e))
 
     def _index_chunk(self, start, end):
+        """扫描指定范围内的所有换行符"""
         offsets = array.array('Q')
         pos = start
         while self._is_running:
@@ -125,16 +133,21 @@ class IndexingWorker(QThread):
         return offsets
 
 class PipelineWorker(QThread):
-    """Processes a chain of filters followed by an optional search in a single pipeline."""
-    finished = pyqtSignal(object, object)  # (indices_array, matches_array)
-    progress = pyqtSignal(float) # For logic stage processing
+    """
+    流水线处理工作线程。
+    1. 调用 ripgrep (Native Stage) 进行快速过滤。
+    2. 对 ripgrep 的结果应用 Python 过滤逻辑 (Logic Stage)。
+    3. 生成最终可见行的索引映射。
+    """
+    finished = pyqtSignal(object, object)  # (可见行索引数组, 搜索匹配项在可见行中的排名)
+    progress = pyqtSignal(float) # 用于 logic 阶段进度
     error = pyqtSignal(str)
 
     def __init__(self, rg_path, file_path, layers, search_config=None):
         super().__init__()
         self.rg_path = rg_path
         self.file_path = file_path
-        self.layers = layers # List of BaseLayer instances
+        self.layers = layers # BaseLayer 实例列表
         self.search = search_config    # {query, regex, caseSensitive}
         self._is_running = True
         self._processes = []
@@ -147,13 +160,13 @@ class PipelineWorker(QThread):
 
     def run(self):
         try:
-            # Stage 1: Native Pipeline (ripgrep)
+            # --- 阶段 1: Native 流水线 (ripgrep) ---
             cmd_chain = []
             
-            # Prepare Native Filters from layers
+            # 准备图层中的 Native 过滤条件
             native_layers = [l for l in self.layers if l.stage == LayerStage.NATIVE]
             
-            # Final search query if present
+            # 如果存在全局搜索查询，准备参数
             s_args = None
             if self.search and self.search.get('query'):
                 s_args = []
@@ -162,11 +175,11 @@ class PipelineWorker(QThread):
                 if not self.search.get('caseSensitive'): s_args.append("-i")
                 s_args.append(self.search['query'])
 
-            # Build command chain
-            # The FIRST stage always generates line numbers and reads the file
-            # Subsequent stages must preserve the "LINE_NUM:" prefix
+            # 构建命令链
+            # 第一阶段总是生成行号并读取文件
+            # 后续阶段必须保留或包裹 "行号:" 前缀
             
-            # If no native layers and no search, we match all
+            # 如果没有 native 图层且没有搜索条件，匹配全量内容
             if not native_layers and not s_args:
                 cmd_chain.append([self.rg_path, "--line-number", "--no-heading", "--no-filename", "--color", "never", "", self.file_path])
             else:
@@ -175,16 +188,10 @@ class PipelineWorker(QThread):
                     if not rg_args: continue
                     
                     if i == 0:
-                        # First stage: generates line numbers
+                        # 第一阶段：生成行号
                         cmd_chain.append([self.rg_path, "--line-number", "--no-heading", "--no-filename", "--color", "never"] + rg_args + [self.file_path])
                     else:
-                        # Piped stages: must wrap and preserve
-                        # We assume the layer provided a simple query or args. 
-                        # For simplicity in this unified architecture, we'll try to extract the query.
-                        # BUT, a better way is to let the layer decide how to wrap itself or 
-                        # have a utility that wraps any rg command to skip prefixes.
-                        
-                        # Legacy-style wrapping (works if rg_args is like ['-i', '-e/F', 'query'])
+                        # 管道后续阶段：必须包裹模式以保留行号
                         query = rg_args[-1]
                         is_regex = "-e" in rg_args
                         is_case_insensitive = "-i" in rg_args
@@ -195,7 +202,7 @@ class PipelineWorker(QThread):
                         
                         cmd_chain.append([self.rg_path, "--no-heading", "--no-filename", "--color", "never", wrapper_pattern, "-"])
 
-                # Add search as final piped stage if it exists
+                # 如果有全局搜索，作为最终管道阶段
                 if s_args:
                     query = s_args[-1]
                     is_regex = "-e" in s_args
@@ -205,17 +212,17 @@ class PipelineWorker(QThread):
                     case_flag = "(?i)" if is_case_insensitive else ""
                     wrapper_pattern = f"^{case_flag}[^:]*:.*{pattern}"
                     
-                    # If this is the ONLY stage, it needs to read the file
+                    # 如果这是唯一的一个阶段，它需要直接读取文件
                     if not cmd_chain:
                         cmd_chain.append([self.rg_path, "--line-number", "--no-heading", "--no-filename", "--color", "never"] + s_args + [self.file_path])
                     else:
                         cmd_chain.append([self.rg_path, "--no-heading", "--no-filename", "--color", "never", wrapper_pattern, "-"])
 
-            # Fallback: If cmd_chain is empty (e.g. all layers skipped), perform a match-all
+            # 兜底：如果命令链为空（例如所有图层都被跳过），执行全量匹配
             if not cmd_chain:
                 cmd_chain.append([self.rg_path, "--line-number", "--no-heading", "--no-filename", "--color", "never", "", self.file_path])
 
-            # ... Execute Pipeline ...
+            # --- 执行流水线 ---
             self._processes = []
             last_stdout = None
             
@@ -230,8 +237,8 @@ class PipelineWorker(QThread):
                 if i > 0 and last_stdout: last_stdout.close()
                 last_stdout = p.stdout
 
-            # Stage 2: Logical Processing (Python Filters)
-            # Find any logic stage layers
+            # --- 阶段 2: 逻辑处理 (Python 过滤器) ---
+            # 找到任何逻辑阶段运行的图层
             logic_layers = [l for l in self.layers if l.stage == LayerStage.LOGIC]
             for l in logic_layers: l.reset()
             
@@ -246,19 +253,18 @@ class PipelineWorker(QThread):
                 line_str = line_bytes.decode('utf-8', errors='ignore')
                 parts = line_str.split(':', 1)
                 
-                if len(parts) < 2: continue # Skip malformed lines (e.g., rg errors)
+                if len(parts) < 2: continue # 跳过异常行（如 rg 报错）
                 
                 try:
                     physical_idx = int(parts[0]) - 1
                     content = parts[1]
                 except ValueError:
-                    continue # Skip if line number is not an integer
+                    continue # 如果行号不是整数则跳过
 
-                # Apply Logic Stage Filters
-                # Apply Logic Stage Filters & Transformations
+                # 应用逻辑阶段过滤器和变换
                 is_visible = True
                 for layer in logic_layers:
-                    # Allow transformation first (e.g. rewrite 'Error' to 'Info' before filtering)
+                    # 首先允许内容变换（例如在过滤前将 'Error' 重写为 'Info'）
                     content = layer.process_line(content)
                     if not layer.filter_line(content, index=physical_idx):
                         is_visible = False
@@ -266,15 +272,14 @@ class PipelineWorker(QThread):
                 
                 if is_visible:
                     visible_indices.append(physical_idx)
-                    # If we had a separate search query, the rg pipeline already filtered for it.
-                    # So, all lines reaching here are matches.
+                    # 如果有全局搜索，流水线已经过滤过了，所以到达这里的都是匹配项
                     if self.search and self.search.get('query'):
                         search_matches.append(v_idx)
                     v_idx += 1
                 
                 line_count += 1
                 if line_count % 10000 == 0:
-                    self.progress.emit(0) # Keep UI alive
+                    self.progress.emit(0) # 保持 UI 响应
             
             if self._is_running:
                 print(f"[Pipeline] Finished. Visible: {len(visible_indices)}, Matches: {len(search_matches)}")
@@ -295,7 +300,11 @@ class PipelineWorker(QThread):
 
 
 class StatsWorker(QThread):
-    finished = pyqtSignal(str) # JSON map layerId -> {count, distribution}
+    """
+    统计工作线程。
+    计算各个图层的匹配行数以及在文件中的分布比例。
+    """
+    finished = pyqtSignal(str) # 发送 JSON 映射 layerId -> {count, distribution}
     error = pyqtSignal(str)
 
     def __init__(self, rg_path, layers, file_path, total_lines):
@@ -318,16 +327,16 @@ class StatsWorker(QThread):
             results = {}
             active_filters = []
             
-            # Pre-calculate tasks to allow parallel execution
+            # 预计算任务以允许并行执行
             tasks = []
             
-            # We track active filters sequentially 
+            # 顺序跟踪活跃的过滤器
             for layer in self.layers:
                 if not self._is_running: break
                 l_id = getattr(layer, 'id', None)
                 if not l_id: continue
                 
-                # Check for query-based layers
+                # 检查基于查询的图层
                 q_conf = None
                 
                 if hasattr(layer, 'query') and layer.query:
@@ -337,26 +346,25 @@ class StatsWorker(QThread):
                         'caseSensitive': getattr(layer, 'caseSensitive', False)
                     }
                 
-                # Special handling for LEVEL
+                # LevelLayer 的特殊处理
                 if layer.__class__.__name__ == 'LevelLayer':
                     lvls = getattr(layer, 'levels', [])
                     if lvls:
                          q_conf = {'query': f"\\b({'|'.join(map(re.escape, lvls))})\\b", 'regex': True, 'caseSensitive': True}
 
-                # Capture current state of active_filters (copy)
+                # 捕获活跃过滤器的当前状态（副本）
                 current_filters = list(active_filters)
                 
-                # Add to filter chain if it's a filtering layer
-                # This ensures the NEXT layer will see this filter
+                # 如果是过滤图层，则添加到过滤器链中
                 if getattr(layer, "enabled", True) and layer.__class__.__name__ in ['FilterLayer', 'LevelLayer'] and q_conf:
                     active_filters.append(q_conf)
 
                 if not q_conf: continue
 
-                # Create a task for this layer
+                # 为该图层创建一个任务
                 tasks.append((layer, l_id, q_conf, current_filters))
 
-            # Execute tasks in parallel
+            # 使用线程池并行执行统计 (ripgrep)
             with ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 4)) as executor:
                 future_to_lid = {}
                 for layer, l_id, q_conf, filters in tasks:
@@ -377,13 +385,13 @@ class StatsWorker(QThread):
             if self._is_running: self.error.emit(str(e))
 
     def _run_layer_stats(self, l_id, q_conf, parent_filters):
-        """Helper to run rg for a single layer stats."""
+        """运行单图层统计的辅助函数"""
         if not self._is_running: return None, None
         
-        # Build pipeline
+        # 构建流水线命令链
         cmd_chain = []
         
-        # 1. Add previous filters
+        # 1. 添加之前的过滤器
         for f in parent_filters:
             c = [self.rg_path, "--no-heading", "--no-filename", "--color", "never"]
             if not f.get('caseSensitive'): c.append("-i")
@@ -391,7 +399,7 @@ class StatsWorker(QThread):
             c.append(f['query'])
             cmd_chain.append(c)
 
-        # 2. Add current layer
+        # 2. 添加当前图层
         final_cmd = [self.rg_path, "--line-number", "--no-heading", "--no-filename", "--color", "never"]
         if not q_conf.get('caseSensitive'): final_cmd.append("-i")
         if not q_conf.get('regex'): final_cmd.append("-F")
@@ -403,12 +411,12 @@ class StatsWorker(QThread):
         
         try:
             if not cmd_chain:
-                # Direct count
+                # 直接计数
                 final_cmd.append(self.file_path)
                 p_final = subprocess.Popen(final_cmd, stdout=subprocess.PIPE, text=True, errors='ignore', creationflags=get_creationflags())
                 procs.append(p_final)
             else:
-                # Pipe chain
+                # 管道链
                 head_cmd = cmd_chain[0] + [self.file_path]
                 p_head = subprocess.Popen(head_cmd, stdout=subprocess.PIPE, creationflags=get_creationflags())
                 procs.append(p_head)
@@ -423,12 +431,7 @@ class StatsWorker(QThread):
                 procs.append(p_final)
                 curr_p.stdout.close()
             
-            # Track processes (thread safe-ish, just for cleanup if needed, 
-            # but here we wait in this thread so it is distinct)
-            # Actually, self._processes is shared. We shouldn't use it in threads.
-            # Local procs list is fine.
-
-            # Reading
+            # 读取输出
             for line in p_final.stdout:
                 if not self._is_running: break
                 colon_pos = line.find(':')
@@ -440,44 +443,46 @@ class StatsWorker(QThread):
                         distribution[bucket] += 1
                         count += 1
             
-            # Cleanup
+            # 清理进程
             for p in procs:
                 try: 
                     p.terminate() 
                     p.wait(timeout=0.1)
                 except: pass
 
-        except Exception as e:
-            # print(f"Layer stats error {l_id}: {e}")
+        except Exception:
             pass
             
-        # Normalize
+        # 归一化分布
         max_val = max(distribution) if any(v > 0 for v in distribution) else 0
         norm_dist = [v / max_val if max_val > 0 else 0 for v in distribution]
 
         return l_id, {"count": count, "distribution": norm_dist}
 
 class LogSession:
-    """Encapsulates state for a single log file session."""
+    """
+    日志会话类。
+    封装了单个打开的日志文件的所有状态。
+    """
     def __init__(self, file_id, path):
         self.id = file_id
         self.path = str(path)
         self.file_obj = None
         self.fd = None
-        self.mmap = None
-        self.size = 0
-        self.line_offsets = array.array('Q')
-        self.visible_indices = None # array.array('I')
-        self.search_matches = None # array.array('I')
-        self.layers = [] 
-        self.layer_instances = []
+        self.mmap = None      # 内存映射对象
+        self.size = 0         # 文件大小
+        self.line_offsets = array.array('Q')  # 每行对应的偏移量映射
+        self.visible_indices = None           # 过滤后可见行的索引
+        self.search_matches = None            # 搜索命中的行索引排名
+        self.layers = []                      # 前端传来的图层配置
+        self.layer_instances = []            # 实例化的 Python 图层对象
         self.search_config = None 
         self.highlight_patterns = []
-        self.cache = {}
-        self.workers = {} 
+        self.cache = {}                      # 行内容缓存 (由于 read_processed_lines 频繁调用)
+        self.workers = {}                    # 后台线程句柄 (indexing, pipeline, stats)
 
     def close(self, bridge=None):
-        """Closes the session. If bridge is provided, workers are retired asynchronously."""
+        """关闭会话。如果提供了 bridge，工作线程将异步退出。"""
         for name, worker in list(self.workers.items()):
             if bridge:
                 bridge._retire_worker(worker)
@@ -495,15 +500,18 @@ class LogSession:
             try: self.file_obj.close()
             except: pass
             self.file_obj = None
-        elif self.fd: # Fallback
+        elif self.fd: # 兜底逻辑
             try: os.close(self.fd)
             except: pass
             self.fd = None
 
 class FileBridge(QObject):
-    """Unified Backend: Manages multiple LogSessions."""
+    """
+    统一后端 (Unified Backend)：管理多个日志会话。
+    通过 QWebChannel 与前端 React 应用通信。
+    """
     
-    # Signals (now include file_id as first argument)
+    # 信号定义（第一个参数通常是 file_id，用于前端区分文件）
     fileLoaded = pyqtSignal(str, str)  # (file_id, JSON_payload)
     pipelineFinished = pyqtSignal(str, int, int) # (file_id, newTotal, matchCount)
     statsFinished = pyqtSignal(str, str)  # (file_id, JSON_payload)
@@ -521,17 +529,18 @@ class FileBridge(QObject):
         super().__init__()
         self._sessions = {} # file_id -> LogSession
         self._rg_path = self._get_rg_path()
-        self._zombie_workers = [] # Keep references to stopping workers
+        self._zombie_workers = [] # 记录正在停止的工作线程，防止其过早被回收
         
+        # 初始化图层注册表并发现插件
         plugin_dir = os.path.join(os.getcwd(), "backend", "plugins")
         self._registry = LayerRegistry(plugin_dir)
         self._registry.discover_plugins()
 
     def _retire_worker(self, worker):
-        """Safely move a worker to the zombie list until it finishes."""
+        """记录停止一个工作线程，直到其真正结束。"""
         if not worker: return
         try:
-            # Disconnect all signals to prevent old workers from emitting
+            # 断开所有信号，防止已弃用的线程再向前端发送消息
             worker.finished.disconnect()
             worker.error.disconnect()
             if hasattr(worker, 'progress'): worker.progress.disconnect()
@@ -539,7 +548,7 @@ class FileBridge(QObject):
         
         worker.stop()
         self._zombie_workers.append(worker)
-        # Remove from list when really finished
+        # 等到工作线程真正结束（由于子进程可能需要时间 terminate），再从僵尸列表中移除
         worker.finished.connect(lambda *args: self._cleanup_zombie(worker))
         worker.error.connect(lambda *args: self._cleanup_zombie(worker))
         if not worker.isRunning():
@@ -550,16 +559,17 @@ class FileBridge(QObject):
             self._zombie_workers.remove(worker)
 
     def _get_rg_path(self):
-        # Handle PyInstaller frozen state
+        """获取 ripgrep 可执行文件的路径，考虑打包和开发环境。"""
+        # 处理 PyInstaller 打包后的路径
         if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
             base_dir = sys._MEIPASS
         else:
             base_dir = os.path.dirname(os.path.abspath(__file__))
             
-        # 1. Check if bin is inside the current directory (bundled or frozen)
+        # 1. 检查 bin 目录（打包后的结构）
         bundled_bin = os.path.join(base_dir, "bin", "windows" if platform.system() == "Windows" else "linux")
         
-        # 2. Check if bin is in the parent directory (dev mode)
+        # 2. 检查父目录的 bin（开发模式结构）
         dev_bin = os.path.join(os.path.dirname(base_dir), "bin", "windows" if platform.system() == "Windows" else "linux")
         
         path_to_check = bundled_bin if os.path.exists(bundled_bin) else dev_bin
@@ -569,8 +579,12 @@ class FileBridge(QObject):
 
     @pyqtSlot(str, str, result=bool)
     def open_file(self, file_id: str, file_path: str) -> bool:
-        """Open and index a log file into a new session."""
+        """
+        打开并索引日志文件 (Open and Index)。
+        这是在前端选择文件后的第一步。
+        """
         try:
+            # 如果session已存在，先关闭（防止内存泄漏）
             if file_id in self._sessions:
                 self._sessions[file_id].close(self)
             
@@ -578,11 +592,12 @@ class FileBridge(QObject):
             if not path.exists(): return False
             
             session = LogSession(file_id, path)
-            # Use open() instead of os.open() for better Windows sharing support
+            # 使用 open() 而不是 os.open() 以获得更好的 Windows 文件共享支持
             session.file_obj = open(path, 'rb')
             session.fd = session.file_obj.fileno()
             session.size = path.stat().st_size
             
+            # 处理空文件
             if session.size == 0:
                 session.line_offsets = array.array('Q')
                 self._sessions[file_id] = session
@@ -591,10 +606,13 @@ class FileBridge(QObject):
                 }))
                 return True
             
+            # 使用内存映射 (mmap) 技术，高效读取大文件
             session.mmap = mmap.mmap(session.fd, 0, access=mmap.ACCESS_READ)
             self._sessions[file_id] = session
             
-            # Start background indexing
+            # 启动后台索引线程 (IndexingWorker)
+            # 这一步是为了快速建立 "行号 -> 文件偏移量" 的映射，
+            # 让我们之后可以瞬间跳转到第 100 万行。
             self.operationStarted.emit(file_id, "indexing")
             worker = IndexingWorker(session.mmap, session.size)
             session.workers['indexing'] = worker
@@ -722,27 +740,25 @@ class FileBridge(QObject):
         return True
 
     def _on_pipeline_finished(self, file_id, visible_indices, search_matches):
+        """流水线运行结束的回调"""
         if file_id not in self._sessions: return
         session = self._sessions[file_id]
         
         session.visible_indices = visible_indices
         session.search_matches = search_matches
         
-        # In search-only mode (Case 1), visible_indices is None and search_matches 
-        # contains the physical indices found.
-        # In filtered mode (Case 2), visible_indices contains the virtual->physical mapping,
-        # and search_matches contains the ranks within visible_indices.
-        
+        # indices_len 是过滤后总行数
+        # matches_len 是搜索命中的次数
         indices_len = len(visible_indices) if visible_indices is not None else len(session.line_offsets)
         matches_len = len(search_matches) if search_matches is not None else 0
             
-        session.cache.clear()
+        session.cache.clear() # 刷新缓存，确保显示的是过滤后的内容
         self.pipelineFinished.emit(file_id, indices_len, matches_len)
         self.operationStatusChanged.emit(file_id, "ready", 100)
 
     @pyqtSlot(str, int, result=int)
     def get_search_match_index(self, file_id: str, rank: int) -> int:
-        """Returns the virtual index of a specific search match rank."""
+        """根据搜索命中的排名 (第几处) 返回其在 LogViewer 中的虚拟行号"""
         if file_id not in self._sessions: return -1
         session = self._sessions[file_id]
         if session.search_matches is None or rank < 0 or rank >= len(session.search_matches):
@@ -751,7 +767,7 @@ class FileBridge(QObject):
 
     @pyqtSlot(str, int, int, result=str)
     def get_search_matches_range(self, file_id: str, start_rank: int, count: int) -> str:
-        """Returns a list of search match indices for a given rank range."""
+        """返回搜索结果索引范围（用于批量处理）"""
         if file_id not in self._sessions: return "[]"
         session = self._sessions[file_id]
         if session.search_matches is None: return "[]"
@@ -764,14 +780,18 @@ class FileBridge(QObject):
         
     @pyqtSlot(str, int, int, result=str)
     def read_processed_lines(self, file_id: str, start_line: int, count: int) -> str:
+        """
+        读取处理后的行 (Read Processed Lines)。
+        前端 LogViewer 滚动时会不断调用此方法来获取要显示的内容。
+        这是虚拟滚动的关键：只读取视口内的数据。
+        """
         if file_id not in self._sessions: return "[]"
         session = self._sessions[file_id]
         
         try:
-            # Defensive check for mmap validity
+            # 防御性检查：确保 mmap 可用
             if session.mmap is None: return "[]"
-            # Some operations on a closed mmap don't raise ValueError until accessed
-            # We check the size as a health probe
+            # 健康检查：访问 len() 可以在 mmap 已关闭时抛出错误
             _ = len(session.mmap) 
             
             if start_line < 0: return "[]"
@@ -887,17 +907,17 @@ class FileBridge(QObject):
 
     @pyqtSlot(str, result=str)
     def list_logs_in_folder(self, folder_path: str) -> str:
-        """Lists all log files in a folder recursively."""
+        """递归列出文件夹下的所有日志文件"""
         return json.dumps(get_log_files_recursive(folder_path))
 
     @pyqtSlot(str, result=str)
     def list_directory(self, folder_path: str) -> str:
-        """Lists all files and folders in a directory (one level)."""
+        """列出目录下的文件和文件夹（单层）"""
         return json.dumps(get_directory_contents(folder_path))
 
     @pyqtSlot(str, str, result=bool)
     def save_workspace_config(self, folder_path: str, config_json: str) -> bool:
-        """Save workspace configuration to .loglayer/config.json in the specified folder."""
+        """将当前工作状态保存到指定目录的 .loglayer/config.json"""
         try:
             config_dir = Path(folder_path) / ".loglayer"
             config_dir.mkdir(parents=True, exist_ok=True)
@@ -914,7 +934,7 @@ class FileBridge(QObject):
 
     @pyqtSlot(str, result=str)
     def load_workspace_config(self, folder_path: str) -> str:
-        """Load workspace configuration from .loglayer/config.json in the specified folder."""
+        """从指定目录加载工作状态"""
         try:
             config_file = Path(folder_path) / ".loglayer" / "config.json"
             if not config_file.exists():

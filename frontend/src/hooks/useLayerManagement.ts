@@ -1,7 +1,11 @@
 /**
- * useLayerManagement - Layer state and operations hook
+ * useLayerManagement - 图层状态与操作 Hook
  * 
- * Manages layer list, history (undo/redo), and layer operations.
+ * 核心功能：
+ * 1. 维护当前文件的图层列表 (Layers)。
+ * 2. 实现撤销/重做 (Undo/Redo) 逻辑。
+ * 3. 处理图层的增删改查、拖拽排序、父子关系。
+ * 4. 保存与平铺预案 (Presets)。
  */
 
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
@@ -23,28 +27,28 @@ export interface UseLayerManagementProps {
 }
 
 export interface UseLayerManagementReturn {
-    // Layer state
+    // 图层状态
     layers: LogLayer[];
     selectedLayerId: string | null;
     setSelectedLayerId: (id: string | null) => void;
     past: LogLayer[][];
     future: LogLayer[][];
 
-    // Computed
-    layersFunctionalHash: string;
+    // 计算属性
+    layersFunctionalHash: string; // 用于判断图层配置是否发生实质性变化（过滤掉 UI 无关属性）
 
-    // Layer operations
+    // 图层操作
     updateLayers: (updater: LogLayer[] | ((prev: LogLayer[]) => LogLayer[]), skipHistory?: boolean) => void;
     addLayer: (type: LayerType, initialConfig?: any) => void;
     handleDrop: (draggedId: string, targetId: string | null, position: 'inside' | 'before' | 'after') => void;
 
-    // History
+    // 历史记录
     undo: () => void;
     redo: () => void;
     canUndo: boolean;
     canRedo: boolean;
 
-    // Presets
+    // 预设方案
     presets: LayerPreset[];
     setPresets: React.Dispatch<React.SetStateAction<LayerPreset[]>>;
     handleSavePreset: () => void;
@@ -63,18 +67,22 @@ export function useLayerManagement({
     const [presets, setPresets] = useState<LayerPreset[]>([]);
     const [saveStatus, setSaveStatus] = useState<'idle' | 'saved'>('idle');
 
-    // Layers derived from active file
+    // 图层数据派生自当前激活的文件对象
     const layers = activeFile?.layers || [];
     const past = activeFile?.history?.past || [];
     const future = activeFile?.history?.future || [];
 
-    // Layers ref for effects
+    // 记录图层引用，用于 Effect 中进行对比
     const layersRef = useRef<LogLayer[]>(layers);
     useEffect(() => {
         layersRef.current = layers;
     }, [layers]);
 
-    // Functional hash for sync optimization
+    /**
+     * 计算功能哈希。
+     * 只有当图层的核心属性（ID, 启用状态, 类型, 配置, 父节点）发生变化时，哈希才会变。
+     * 这用于触发后端的 Pipeline 运行，而折叠状态等 UI 变动则不会触发。
+     */
     const layersFunctionalHash = useMemo(() => {
         return JSON.stringify(layers.map(l => [
             l.id,
@@ -85,7 +93,7 @@ export function useLayerManagement({
         ]));
     }, [layers]);
 
-    // Load presets from localStorage
+    // 从 LocalStorage 加载预设方案
     useEffect(() => {
         const saved = localStorage.getItem('loglayer_presets');
         let initialPresets: LayerPreset[] = [];
@@ -98,6 +106,7 @@ export function useLayerManagement({
             }
         }
 
+        // 确保有一个系统默认预设
         let defaultPreset = initialPresets.find(p =>
             p.id === DEFAULT_PRESET_ID || p.name === '默认' || p.name === 'Default'
         );
@@ -120,7 +129,9 @@ export function useLayerManagement({
         localStorage.setItem('loglayer_presets', JSON.stringify(initialPresets));
     }, []);
 
-    // Update layers with history
+    /**
+     * 更新图层并根据需要记录历史。
+     */
     const updateLayers = useCallback((updater: LogLayer[] | ((prev: LogLayer[]) => LogLayer[]), skipHistory = false) => {
         if (!activeFileId) return;
 
@@ -130,7 +141,7 @@ export function useLayerManagement({
             const currentLayers = file.layers || [];
             const nextLayers = typeof updater === 'function' ? updater(currentLayers) : updater;
 
-            // History logic
+            // 历史记录逻辑：只有内容真正改变且非 skipHistory 时才记录
             let newHistory = file.history || { past: [], future: [] };
             if (!skipHistory && JSON.stringify(currentLayers) !== JSON.stringify(nextLayers)) {
                 newHistory = {
@@ -143,7 +154,7 @@ export function useLayerManagement({
         }));
     }, [activeFileId, setFiles]);
 
-    // Undo
+    // 撤销
     const undo = useCallback(() => {
         if (!activeFileId) return;
         setFiles(prev => prev.map(file => {
@@ -161,7 +172,7 @@ export function useLayerManagement({
         }));
     }, [activeFileId, setFiles]);
 
-    // Redo
+    // 重做
     const redo = useCallback(() => {
         if (!activeFileId) return;
         setFiles(prev => prev.map(file => {
@@ -179,19 +190,26 @@ export function useLayerManagement({
         }));
     }, [activeFileId, setFiles]);
 
+    // 获取从后端注册的所有图层类型描述
     const { registry } = useLayerRegistry();
 
-    // Add layer
+    /**
+     * 添加新图层。
+     * @param type 类型 ID（如 FILTER, HIGHLIGHT 或插件 ID）
+     * @param initialConfig 初始配置
+     */
     const addLayer = useCallback((type: LayerType | string, initialConfig: any = {}) => {
         const newId = Math.random().toString(36).substr(2, 9);
         let parentId: string | undefined = undefined;
 
+        // 如果当前选中了某个图层，根据其类型决定新图层的父组件
         if (selectedLayerId) {
             const selected = layers.find(l => l.id === selectedLayerId);
             if (selected?.type === LayerType.FOLDER) parentId = selected.id;
             else if (selected?.groupId) parentId = selected.groupId;
         }
 
+        // 特殊处理：分组（文件夹）类型
         if (type === LayerType.FOLDER) {
             const newLayer: LogLayer = {
                 id: newId,
@@ -207,7 +225,7 @@ export function useLayerManagement({
             return;
         }
 
-        // Lookup in registry
+        // 从 Registry 中获取默认配置（Schema）
         const entry = registry[type];
         if (!entry) {
             console.warn(`[useLayerManagement] Unknown layer type: ${type}`);
@@ -233,7 +251,7 @@ export function useLayerManagement({
 
         updateLayers(prev => {
             const next = [...prev];
-            // If added to a folder, ensure folder is expanded
+            // 如果添加到了某个文件夹，确保该文件夹是展开状态
             if (parentId) {
                 const parentIdx = next.findIndex(l => l.id === parentId);
                 if (parentIdx >= 0) {
@@ -246,7 +264,10 @@ export function useLayerManagement({
         setSelectedLayerId(newId);
     }, [selectedLayerId, layers, updateLayers, registry]);
 
-    // Handle drag and drop
+    /**
+     * 处理图层拖拽排序。
+     * 支持：移入文件夹、移至上方、移至下方。
+     */
     const handleDrop = useCallback((draggedId: string, targetId: string | null, position: 'inside' | 'before' | 'after') => {
         updateLayers(prev => {
             const next = [...prev];
@@ -256,7 +277,7 @@ export function useLayerManagement({
             const targetIdx = targetId ? next.findIndex(l => l.id === targetId) : -1;
             if (targetId && targetIdx === -1) return prev;
 
-            // Prevent dropping a folder into itself or its descendants
+            // 防环检查：禁止将父节点拖入其自身的子节点中
             if (targetId) {
                 let curr: string | undefined = targetId;
                 while (curr) {
@@ -268,34 +289,36 @@ export function useLayerManagement({
                 }
             }
 
-            // Remove and clone the dragged layer
+            // 先从原位置移除
             let [draggedLayer] = next.splice(draggedIdx, 1);
             draggedLayer = { ...draggedLayer };
 
-            // Find current target index in the MODIFIED array
+            // 重新计算目标位置在修改后的数组中的索引
             const currentTargetIdx = targetId ? next.findIndex(l => l.id === targetId) : -1;
 
             if (position === 'inside' && targetId) {
+                // 移入文件夹
                 draggedLayer.groupId = targetId;
-                // Place as the first child of the folder
                 next.splice(currentTargetIdx + 1, 0, draggedLayer);
             } else if (targetId) {
+                // 移至某图层的相邻位置
                 const targetLayer = next[currentTargetIdx];
                 draggedLayer.groupId = targetLayer.groupId;
                 const finalIdx = position === 'before' ? currentTargetIdx : currentTargetIdx + 1;
                 next.splice(finalIdx, 0, draggedLayer);
             } else {
+                // 移至根目录末尾
                 draggedLayer.groupId = undefined;
                 next.push(draggedLayer);
             }
 
-            // Clear global fallback
-            (window as any).__draggedLayerId = null;
             return next;
         });
     }, [updateLayers]);
 
-    // Save preset
+    /**
+     * 保存当前的图层配置为预设。
+     */
     const handleSavePreset = useCallback(() => {
         const presetName = prompt("输入预设名称 (输入 '默认' 将更新系统设置):");
         if (!presetName) return;

@@ -91,6 +91,10 @@ graph TD
 - **Workspace Config Persistence**: Added automatic layer configuration persistence. Layer configurations are now saved to `.loglayer/config.json` in the workspace folder and auto-loaded when reopening the same folder. Implemented via `useWorkspaceConfig` hook with 1-second debounced auto-save.
 - **Standalone Packaging**: Implemented cross-platform one-click offline packaging workflow. Added `package.bat` and `package_exe.bat` for building self-contained Windows distributions. Output includes `LogLayer_Standalone` (Frozen EXE) and bundles `rg` binaries for both platforms. Fixed issue where subprocesses (e.g. `ripgrep`) would pop up console windows by using `CREATE_NO_WINDOW` flags on Windows.
 - **Qt Compatibility Layer**: Introduced `qt_compat.py` to provide a unified API for PyQt6, PySide6, PyQt5, and PySide2. This allows the backend to run on systems with different Qt bindings installed.
+- **Improved Source Accessibility**:
+    - **Comprehensive Chinese Annotations**: Added detailed Chinese comments to all core backend files (`bridge.py`, `core.py`, `registry.py`, etc.) and key frontend files (`App.tsx`, `LogViewer.tsx`, `bridge_client.ts`).
+    - **Project Learning Path**: Created `docs/LEARNING_PATH.md` as a developer-friendly entry point for new contributors.
+    - **Educational Documentation**: Refined `docs/DESIGN.md` and `docs/DEV_MANUAL.md` to align with the latest architecture.
 ## 7. Change Log (2026-02-01)
 - **Unified Layer Architecture**: Fully migrated all processing logic (Filter, Highlight, Level, etc.) to a unified Python component system.
 - **Python-Driven UI**: Implemented `loglayer.ui` for defining frontend schemas in Python. Frontend now dynamically renders configuration UIs using `InputMapper` and `DynamicForm`.

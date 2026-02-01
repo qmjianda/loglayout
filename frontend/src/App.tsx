@@ -1,8 +1,11 @@
 /**
- * App.tsx - Refactored to use custom hooks
+ * App.tsx - 应用程序主入口
  * 
- * This is a significant refactor from 1009 lines to ~350 lines.
- * All state management has been moved to hooks in ./hooks/
+ * 采用了 Hook 分离架构，将复杂的业务逻辑分发到各个 custom hooks 中：
+ * - useFileManagement: 处理文件打开、关闭、切换。
+ * - useLayerManagement: 处理图层的增删改查、拖拽排序、撤销重做。
+ * - useSearch: 处理全局搜索逻辑。
+ * - useBridge: 处理前端与 Python 后端的信号监听与数据同步。
  */
 
 import React, { useMemo, useCallback, useEffect } from 'react';
@@ -18,7 +21,7 @@ import { IndexingOverlay, FileLoadingSkeleton, PendingFilesWall } from './compon
 import { LayerType } from './types';
 import { openFile, syncAll } from './bridge_client';
 
-// Import custom hooks
+// 导入自定义 Hooks
 import {
   useBridge,
   useFileManagement,
@@ -32,7 +35,8 @@ import {
 
 
 const App: React.FC = () => {
-  // ===== FILE MANAGEMENT =====
+  // ===== 文件管理 (File Management) =====
+  // 负责维护当前打开的文件列表、激活的文件、分栏状态等。
   const fileManagement = useFileManagement();
   const {
     files,
@@ -63,20 +67,21 @@ const App: React.FC = () => {
     markFileLoaded
   } = fileManagement;
 
-  // Convenience accessors
+  // 便捷访问器：获取当前激活文件的基础统计信息
   const fileName = activeFile?.name || '';
   const fileSize = activeFile?.size || 0;
   const activeProcessed = activeFileId ? processedCache[activeFileId] : null;
   const layerStats = activeProcessed?.layerStats || {};
   const searchMatchCount = activeProcessed?.searchMatchCount || 0;
 
-  // ===== LAYER MANAGEMENT =====
+  // ===== 图层管理 (Layer Management) =====
+  // 负责管理针对每个文件的图层流水线配置。
   const layerManagement = useLayerManagement({
     activeFileId,
     activeFile,
     files,
     setFiles,
-    searchQuery: '', // Will be connected after useSearch
+    searchQuery: '', // 将在 useSearch 之后连接
     searchConfig: { regex: false, caseSensitive: false }
   });
 
@@ -100,7 +105,8 @@ const App: React.FC = () => {
     saveStatus
   } = layerManagement;
 
-  // ===== SEARCH =====
+  // ===== 搜索功能 (Search) =====
+  // 封装了全局搜索和编辑器内搜索的逻辑。
   const search = useSearch({
     activeFileId,
     layers,
@@ -120,13 +126,14 @@ const App: React.FC = () => {
     currentMatchIndex,
     isSearching,
     setIsSearching,
-    searchMatchCount: searchMatchCountFromHook, // Renamed to avoid collision with accessor
+    searchMatchCount: searchMatchCountFromHook,
     currentMatchNumber,
     findNextSearchMatch,
     clearSearch
   } = search;
 
-  // ===== UI STATE =====
+  // ===== UI 状态控制 (UI State) =====
+  // 处理各种面板显隐、滚动定位、进度条、工作区根目录等。
   const uiState = useUIState({
     undo,
     redo,
@@ -160,7 +167,8 @@ const App: React.FC = () => {
 
   const [isLayerProcessing, setIsLayerProcessing] = React.useState(false);
 
-  // ===== WORKSPACE CONFIG PERSISTENCE =====
+  // ===== 工作区持久化 (Workspace Config Persistence) =====
+  // 自动将当前打开的文件和图层配置保存到本地磁盘（.loglayer 目录）。
   useWorkspaceConfig({
     workspaceRoot,
     files,
@@ -171,8 +179,10 @@ const App: React.FC = () => {
     handleFileActivate
   });
 
-  // ===== BRIDGE INTEGRATION =====
+  // ===== 桥接层集成 (Bridge Integration) =====
+  // 监听来自 Python 后端的信号（文件加载完成、搜索完成、统计完成等）。
   const { bridgeApi, activeFileIdRef, setActiveFileId: setBridgeActiveFileId } = useBridge({
+    // 当后端成功解析并建立文件索引后触发
     onFileLoaded: (fileId: string, info: FileLoadedInfo) => {
       setBridgedCount(fileId, info.lineCount);
 
@@ -201,6 +211,7 @@ const App: React.FC = () => {
             path: info.path || info.name,
             history: { past: [], future: [] }
           };
+          // 自动激活新加载的文件
           setTimeout(() => setActiveFileId(fileId), 0);
           return [...prev, newFile];
         }
@@ -212,6 +223,7 @@ const App: React.FC = () => {
       markFileLoaded(fileId);
     },
 
+    // 当后端 Pipeline 运行结束（过滤/搜索合并）后触发
     onPipelineFinished: (fileId, newTotal, matchCount) => {
       setBridgedCount(fileId, newTotal);
       setFiles(prev => prev.map(f => f.id === fileId ? { ...f, lineCount: newTotal } : f));
@@ -228,6 +240,7 @@ const App: React.FC = () => {
       }
     },
 
+    // 当后端各图层统计数据计算完成后触发
     onStatsFinished: (fileId, stats) => {
       setProcessedCache(prev => ({
         ...prev,
@@ -235,6 +248,7 @@ const App: React.FC = () => {
       }));
     },
 
+    // 监听各种后台任务的进度（Indexing, Pipeline, Searching 等）
     onOperationStarted: (fileId, op) => {
       if (activeFileIdRef.current === fileId) {
         setOperationStatus({ op, progress: 0 });
@@ -259,17 +273,18 @@ const App: React.FC = () => {
       }
     },
 
+    // 处理从 CLI 启动时排队解析的文件
     onPendingFilesCount: (count) => {
       setPendingCliFiles(count);
     }
   });
 
-  // Keep bridge ref in sync with active file
+  // 保持 bridge 层的引用与当前激活文件一致
   useEffect(() => {
     setBridgeActiveFileId(activeFileId);
   }, [activeFileId, setBridgeActiveFileId]);
 
-  // File info list for UnifiedPanel
+  // 为侧边栏 UnifiedPanel 准备文件列表信息
   const fileInfoList: FileInfo[] = useMemo(() =>
     files.map(f => ({
       id: f.id,
@@ -280,15 +295,12 @@ const App: React.FC = () => {
       layers: f.layers
     })), [files, activeFileId]);
 
-  // Active stats
-  const activeStats = useMemo(() => ({ ...layerStats }), [layerStats]);
-
-  // Enhanced file activate that opens file on backend
+  // 增强版：激活文件，并确保其在后端也处于同步状态
   const handleFileActivateWithLoad = useCallback((fileId: string) => {
     handleFileActivate(fileId);
   }, [handleFileActivate]);
 
-  // Find next search match with jump
+  // 导航到下一个搜索匹配项，并自动滚动到底部/指定行
   const findNextSearchMatchWithJump = useCallback(async (direction: 'next' | 'prev') => {
     const nextIdx = await findNextSearchMatch(direction);
     if (nextIdx !== -1) {
@@ -296,7 +308,7 @@ const App: React.FC = () => {
     }
   }, [findNextSearchMatch, handleJumpToLine, activeFile?.lineCount]);
 
-  // Handle folder select with workspace update
+  // 处理文件夹选择，并将其设置为当前工作区根目录
   const handleFolderSelectWithWorkspace = useCallback(async () => {
     const result = await handleNativeFolderSelect();
     if (result) {
@@ -308,14 +320,13 @@ const App: React.FC = () => {
     <div
       className="flex flex-col h-screen select-none overflow-hidden text-sm bg-[#1e1e1e] text-[#cccccc]"
       onDragOver={(e) => {
-        // This is the CRITICAL fix: preventing default on the entire app window
-        // ensures that individual components can receive drops without the 
-        // global "forbidden" cursor overriding them.
+        // 关键修复：防止浏览器默认的拖拽操作（如直接打开文件）
+        // 这样组件内部的 Drop 区域才能正常工作。
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
       }}
     >
-      {/* Hidden file inputs */}
+      {/* 隐藏的文件上传 Input 控件 */}
       <input
         ref={fileInputRef as any}
         type="file"
@@ -329,13 +340,13 @@ const App: React.FC = () => {
         type="file"
         style={{ display: 'none' }}
         onChange={handleFolderUpload}
-        // @ts-ignore - webkitdirectory is non-standard
+        // @ts-ignore - webkitdirectory 是非标准属性，用于选择目录
         webkitdirectory=""
         directory=""
         multiple
       />
 
-      {/* Header */}
+      {/* 顶部标题栏 */}
       <div className="h-9 bg-[#2d2d2d] flex items-center px-4 border-b border-[#111] shrink-0 justify-between">
         <div className="flex items-center space-x-4">
           <span className="text-blue-400 font-black tracking-tighter flex items-center cursor-default">
@@ -349,7 +360,7 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      {/* Progress bar - Absolute positioned to prevent layout shift */}
+      {/* 顶部进度条 - 使用绝对定位防止布局跳动 */}
       <div className="absolute top-9 left-0 right-0 h-0.5 z-50 pointer-events-none">
         {(isProcessing || isLayerProcessing) && (
           <div className={`h-full bg-blue-500 transition-all duration-300 ${isLayerProcessing ? 'animate-pulse' : ''}`}
@@ -358,14 +369,15 @@ const App: React.FC = () => {
       </div>
 
       <div className="flex-1 flex overflow-hidden">
+        {/* 左侧侧边栏按钮（Explorer, Search, Help） */}
         <Sidebar activeView={activeView} onSetActiveView={setActiveView} />
 
-        {/* Sidebar Panel */}
+        {/* 侧边栏面板容器 */}
         <div
           className="bg-[#252526] border-r border-[#111] flex flex-col shrink-0 shadow-lg relative group/sidebar"
           style={{ width: sidebarWidth }}
         >
-          {/* Resizer */}
+          {/* 拖拽调整宽度的 Handle */}
           <div
             className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-blue-500/50 z-50 transition-colors opacity-0 group-hover/sidebar:opacity-100"
             onMouseDown={(e) => {
@@ -385,6 +397,7 @@ const App: React.FC = () => {
             }}
           />
 
+          {/* 资源管理器视图：包含文件树和图层管理 */}
           {activeView === 'main' && (
             <UnifiedPanel
               workspaceRoot={workspaceRoot}
@@ -423,6 +436,7 @@ const App: React.FC = () => {
             />
           )}
 
+          {/* 全局搜索视图 */}
           {activeView === 'search' && (
             <SearchPanel
               onSearch={setSearchQuery}
@@ -435,13 +449,13 @@ const App: React.FC = () => {
           )}
         </div>
 
-        {/* Main Content Area */}
+        {/* 主内容区域：显示日志视图或帮助文档 */}
         <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-[#1e1e1e] relative select-text overflow-hidden">
           {activeView === 'help' ? (
             <HelpPanel />
           ) : (
             <>
-              {/* Find Widget Overlay */}
+              {/* 悬浮组件：Ctrl+F 查找搜索框 */}
               {isFindVisible && (
                 <EditorFindWidget
                   query={searchQuery}
@@ -464,7 +478,7 @@ const App: React.FC = () => {
                 />
               )}
 
-              {/* GoTo Line Widget */}
+              {/* 悬浮组件：Ctrl+G 跳转行号 */}
               {isGoToLineVisible && (
                 <EditorGoToLineWidget
                   totalLines={activeFile?.lineCount || 0}
@@ -476,7 +490,7 @@ const App: React.FC = () => {
                 />
               )}
 
-              {/* Editor Panes */}
+              {/* 中间编辑器区域（支持分栏，目前主要实现单栏） */}
               <div className="flex-1 flex overflow-hidden min-w-0 min-h-0">
                 {panes.map((pane) => {
                   const paneFileId = pane.fileId;
@@ -489,7 +503,7 @@ const App: React.FC = () => {
                         className={`flex-1 flex flex-col min-h-0 relative ${activePaneId === pane.id ? 'ring-1 ring-blue-500/30' : ''}`}
                         onClick={() => setActivePaneId(pane.id)}
                       >
-                        {/* Pane Header */}
+                        {/* 标签栏（目前显示当前文件名） */}
                         <div className="h-8 bg-[#252526] flex items-center px-4 text-xs text-gray-400 border-b border-[#111] shrink-0 select-none">
                           <span className="truncate">{paneFileId ? (files.find(f => f.id === paneFileId)?.name || 'Unknown File') : 'Empty Pane'}</span>
                           <div className="ml-auto flex gap-2">
@@ -497,18 +511,17 @@ const App: React.FC = () => {
                               <button onClick={(e) => {
                                 e.stopPropagation();
                                 const newPanes = panes.filter(p => p.id !== pane.id);
-                                // Note: setPanes would need to be exposed from useFileManagement
                               }} className="hover:text-white">✕</button>
                             )}
                           </div>
                         </div>
 
-                        {/* Loading States - Unified to use FileLoadingSkeleton */}
+                        {/* 文件加载中的骨架屏或 Loading 状态 */}
                         {(paneFileId && loadingFileIds.has(paneFileId)) || (paneFileId === activeFileId && isProcessing && operationStatus?.op === 'indexing') ? (
                           <FileLoadingSkeleton fileName={files.find(f => f.id === paneFileId)?.name} />
                         ) : null}
 
-                        {/* Log Viewer or Empty State */}
+                        {/* 核心组件：Monaco 编辑器封装的日志查看器 */}
                         {paneFileId ? (
                           <div className="flex-1 flex flex-col relative min-h-0 overflow-hidden">
                             <LogViewer
@@ -527,15 +540,17 @@ const App: React.FC = () => {
                             />
                           </div>
                         ) : pendingCliFiles > 0 ? (
+                          // CLI 待处理文件占位
                           <PendingFilesWall count={pendingCliFiles} />
                         ) : (
+                          // 无文件时的欢迎界面
                           <div
                             className="flex-1 flex flex-col items-center justify-center text-gray-600 bg-dark-2 cursor-pointer hover:bg-dark-1 transition-colors"
                             onClick={handleNativeFileSelect}
                           >
                             <svg className="w-12 h-12 mb-4 opacity-20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="1" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                            <p className="text-sm font-medium">Drag a file here to open</p>
-                            <p className="text-[10px] mt-2 opacity-50">or click to browse local files</p>
+                            <p className="text-sm font-medium">将日志文件拖拽至此处打开</p>
+                            <p className="text-[10px] mt-2 opacity-50">或点击浏览本地文件</p>
                           </div>
                         )}
                       </div>
@@ -548,6 +563,7 @@ const App: React.FC = () => {
         </div>
       </div>
 
+      {/* 底部状态栏 */}
       <StatusBar
         lines={activeFile?.lineCount || 0}
         totalLines={activeFile?.rawCount || 0}
