@@ -240,20 +240,21 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
           </div>
 
           {/* Actions */}
-          <div className="no-drag flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+          {/* Actions - Visible on Hover OR if Selected */}
+          <div className="no-drag flex items-center">
             <button
               onClick={(e) => { e.stopPropagation(); onUpdate(layer.id, { enabled: !layer.enabled }); }}
-              className={`p-1.5 ${layer.enabled ? 'text-blue-500' : 'text-gray-600'} hover:bg-white/5 rounded`}
+              className={`p-1.5 ${layer.enabled ? 'text-blue-500' : 'text-gray-400'} hover:bg-white/5 rounded`}
               title={layer.enabled ? '禁用' : '启用'}
             >
               <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" /></svg>
             </button>
             <button
               onClick={(e) => { e.stopPropagation(); onRemove(layer.id); }}
-              className="p-1.5 text-gray-600 hover:text-red-400 hover:bg-red-500/10 rounded"
+              className="p-1.5 text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors"
               title="删除"
             >
-              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="3" d="M6 18L18 6M6 6l12 12" /></svg>
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
             </button>
           </div>
         </div>
@@ -305,7 +306,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
 
   return (
     <div
-      className="flex flex-col pb-20 min-h-[200px] select-none"
+      className="flex flex-col select-none"
       onDragOver={(e) => {
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';

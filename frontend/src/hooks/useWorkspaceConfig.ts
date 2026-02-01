@@ -115,7 +115,8 @@ export function useWorkspaceConfig({
                     size: cf.size,
                     lineCount: 0, // Will update when loaded
                     rawCount: 0,
-                    layers: cf.layers || [],
+                    // Force collapse all layers when loading from config
+                    layers: (cf.layers || []).map(l => ({ ...l, isCollapsed: true })),
                     isBridged: true,
                     path: cf.path,
                     history: { past: [], future: [] }

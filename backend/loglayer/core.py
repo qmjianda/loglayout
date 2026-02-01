@@ -10,11 +10,19 @@ class BaseLayer(Component):
     stage = LayerStage.LOGIC
     icon = "default"
     
-    def filter_line(self, content: str) -> bool:
+    def filter_line(self, content: str, index: int = -1) -> bool:
         return True
 
     def highlight_line(self, content: str):
         return []
+
+    def process_line(self, content: str) -> str:
+        """Transforms line content. Returns new content."""
+        return content
+
+    def reset(self):
+        """Called before a new pipeline run starts."""
+        pass
 
 class NativeLayer(BaseLayer):
     stage = LayerStage.NATIVE

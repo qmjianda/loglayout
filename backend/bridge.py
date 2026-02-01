@@ -28,7 +28,7 @@ def get_log_files_recursive(folder_path):
         for root, _, files in os.walk(folder_path):
             for file in files:
                 # Common log extensions or files with no extension (often logs in linux)
-                if file.lower().endswith(('.log', '.txt', '.json')) or '.' not in file:
+                if file.lower().endswith(('.log', '.txt', '.json', '.csv', '.md')) or '.' not in file:
                     full_path = os.path.join(root, file)
                     try:
                         stats = os.stat(full_path)
@@ -211,6 +211,10 @@ class PipelineWorker(QThread):
                     else:
                         cmd_chain.append([self.rg_path, "--no-heading", "--no-filename", "--color", "never", wrapper_pattern, "-"])
 
+            # Fallback: If cmd_chain is empty (e.g. all layers skipped), perform a match-all
+            if not cmd_chain:
+                cmd_chain.append([self.rg_path, "--line-number", "--no-heading", "--no-filename", "--color", "never", "", self.file_path])
+
             # ... Execute Pipeline ...
             self._processes = []
             last_stdout = None
@@ -229,6 +233,7 @@ class PipelineWorker(QThread):
             # Stage 2: Logical Processing (Python Filters)
             # Find any logic stage layers
             logic_layers = [l for l in self.layers if l.stage == LayerStage.LOGIC]
+            for l in logic_layers: l.reset()
             
             visible_indices = array.array('I')
             search_matches = array.array('I')
@@ -250,9 +255,12 @@ class PipelineWorker(QThread):
                     continue # Skip if line number is not an integer
 
                 # Apply Logic Stage Filters
+                # Apply Logic Stage Filters & Transformations
                 is_visible = True
                 for layer in logic_layers:
-                    if not layer.filter_line(content):
+                    # Allow transformation first (e.g. rewrite 'Error' to 'Info' before filtering)
+                    content = layer.process_line(content)
+                    if not layer.filter_line(content, index=physical_idx):
                         is_visible = False
                         break
                 
@@ -310,15 +318,18 @@ class StatsWorker(QThread):
             results = {}
             active_filters = []
             
+            # Pre-calculate tasks to allow parallel execution
+            tasks = []
+            
+            # We track active filters sequentially 
             for layer in self.layers:
                 if not self._is_running: break
                 l_id = getattr(layer, 'id', None)
                 if not l_id: continue
                 
-                # We calculate stats for each layer
+                # Check for query-based layers
                 q_conf = None
                 
-                # Check for query-based layers
                 if hasattr(layer, 'query') and layer.query:
                     q_conf = {
                         'query': layer.query,
@@ -332,89 +343,119 @@ class StatsWorker(QThread):
                     if lvls:
                          q_conf = {'query': f"\\b({'|'.join(map(re.escape, lvls))})\\b", 'regex': True, 'caseSensitive': True}
 
-                if not q_conf: continue
-
-                # Build pipeline for this layer's count
-                # Count = How many lines match this layer's query GIVEN all previous enabled filtering layers
-                cmd_chain = []
-                
-                # 1. Add all previous active filters
-                for f in active_filters:
-                    c = [self.rg_path, "--no-heading", "--no-filename", "--color", "never"]
-                    if not f.get('caseSensitive'): c.append("-i")
-                    if not f.get('regex'): c.append("-F")
-                    c.append(f['query'])
-                    cmd_chain.append(c)
-
-                # 2. Add current layer with line numbers
-                # Instead of -c, we use --line-number to get distribution too
-                final_cmd = [self.rg_path, "--line-number", "--no-heading", "--no-filename", "--color", "never"]
-                if not q_conf.get('caseSensitive'): final_cmd.append("-i")
-                if not q_conf.get('regex'): final_cmd.append("-F")
-                final_cmd.append(q_conf['query'])
-                
-                count = 0
-                distribution = [0] * 20
-                
-                try:
-                    self._processes = []
-                    if not cmd_chain:
-                        # Direct count from file
-                        final_cmd.append(self.file_path)
-                        p_final = subprocess.Popen(final_cmd, stdout=subprocess.PIPE, text=True, errors='ignore', creationflags=get_creationflags())
-                        self._processes.append(p_final)
-                    else:
-                        # Pipe chain
-                        head_cmd = cmd_chain[0] + [self.file_path]
-                        p_head = subprocess.Popen(head_cmd, stdout=subprocess.PIPE, creationflags=get_creationflags())
-                        self._processes.append(p_head)
-                        curr_p = p_head
-                        for i in range(1, len(cmd_chain)):
-                            p_next = subprocess.Popen(cmd_chain[i], stdin=curr_p.stdout, stdout=subprocess.PIPE, creationflags=get_creationflags())
-                            self._processes.append(p_next)
-                            curr_p.stdout.close()
-                            curr_p = p_next
-                        
-                        p_final = subprocess.Popen(final_cmd, stdin=curr_p.stdout, stdout=subprocess.PIPE, text=True, errors='ignore', creationflags=get_creationflags())
-                        self._processes.append(p_final)
-                        curr_p.stdout.close()
-                    
-                    # Read line numbers and bucket them
-                    for line in p_final.stdout:
-                        if not self._is_running: break
-                        colon_pos = line.find(':')
-                        if colon_pos != -1:
-                            l_str = line[:colon_pos]
-                            if l_str.isdigit():
-                                l_num = int(l_str) - 1
-                                bucket = min(19, int((l_num / self.total_lines) * 20))
-                                distribution[bucket] += 1
-                                count += 1
-                    
-                    for p in self._processes:
-                        try:
-                            p.terminate()
-                            p.wait(timeout=0.1)
-                        except: pass
-                    self._processes = []
-                except Exception as e:
-                    print(f"Stats layer error: {e}")
-                    continue
-
-                # Normalize distribution (0.0 to 1.0)
-                max_val = max(distribution) if any(v > 0 for v in distribution) else 0
-                norm_dist = [v / max_val if max_val > 0 else 0 for v in distribution]
-
-                results[l_id] = {"count": count, "distribution": norm_dist}
+                # Capture current state of active_filters (copy)
+                current_filters = list(active_filters)
                 
                 # Add to filter chain if it's a filtering layer
-                if getattr(layer, "enabled", True) and layer.__class__.__name__ in ['FilterLayer', 'LevelLayer']:
+                # This ensures the NEXT layer will see this filter
+                if getattr(layer, "enabled", True) and layer.__class__.__name__ in ['FilterLayer', 'LevelLayer'] and q_conf:
                     active_filters.append(q_conf)
+
+                if not q_conf: continue
+
+                # Create a task for this layer
+                tasks.append((layer, l_id, q_conf, current_filters))
+
+            # Execute tasks in parallel
+            with ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 4)) as executor:
+                future_to_lid = {}
+                for layer, l_id, q_conf, filters in tasks:
+                    future_to_lid[executor.submit(self._run_layer_stats, l_id, q_conf, filters)] = l_id
+                
+                for future in future_to_lid:
+                    if not self._is_running: break
+                    try:
+                        lid, res = future.result()
+                        if lid and res:
+                            results[lid] = res
+                    except Exception as e:
+                        print(f"Stats task error: {e}")
 
             if self._is_running:
                 self.finished.emit(json.dumps(results))
         except Exception as e:
             if self._is_running: self.error.emit(str(e))
+
+    def _run_layer_stats(self, l_id, q_conf, parent_filters):
+        """Helper to run rg for a single layer stats."""
+        if not self._is_running: return None, None
+        
+        # Build pipeline
+        cmd_chain = []
+        
+        # 1. Add previous filters
+        for f in parent_filters:
+            c = [self.rg_path, "--no-heading", "--no-filename", "--color", "never"]
+            if not f.get('caseSensitive'): c.append("-i")
+            if not f.get('regex'): c.append("-F")
+            c.append(f['query'])
+            cmd_chain.append(c)
+
+        # 2. Add current layer
+        final_cmd = [self.rg_path, "--line-number", "--no-heading", "--no-filename", "--color", "never"]
+        if not q_conf.get('caseSensitive'): final_cmd.append("-i")
+        if not q_conf.get('regex'): final_cmd.append("-F")
+        final_cmd.append(q_conf['query'])
+        
+        count = 0
+        distribution = [0] * 20
+        procs = []
+        
+        try:
+            if not cmd_chain:
+                # Direct count
+                final_cmd.append(self.file_path)
+                p_final = subprocess.Popen(final_cmd, stdout=subprocess.PIPE, text=True, errors='ignore', creationflags=get_creationflags())
+                procs.append(p_final)
+            else:
+                # Pipe chain
+                head_cmd = cmd_chain[0] + [self.file_path]
+                p_head = subprocess.Popen(head_cmd, stdout=subprocess.PIPE, creationflags=get_creationflags())
+                procs.append(p_head)
+                curr_p = p_head
+                for i in range(1, len(cmd_chain)):
+                    p_next = subprocess.Popen(cmd_chain[i], stdin=curr_p.stdout, stdout=subprocess.PIPE, creationflags=get_creationflags())
+                    procs.append(p_next)
+                    curr_p.stdout.close()
+                    curr_p = p_next
+                
+                p_final = subprocess.Popen(final_cmd, stdin=curr_p.stdout, stdout=subprocess.PIPE, text=True, errors='ignore', creationflags=get_creationflags())
+                procs.append(p_final)
+                curr_p.stdout.close()
+            
+            # Track processes (thread safe-ish, just for cleanup if needed, 
+            # but here we wait in this thread so it is distinct)
+            # Actually, self._processes is shared. We shouldn't use it in threads.
+            # Local procs list is fine.
+
+            # Reading
+            for line in p_final.stdout:
+                if not self._is_running: break
+                colon_pos = line.find(':')
+                if colon_pos != -1:
+                    l_str = line[:colon_pos]
+                    if l_str.isdigit():
+                        l_num = int(l_str) - 1
+                        bucket = min(19, int((l_num / self.total_lines) * 20))
+                        distribution[bucket] += 1
+                        count += 1
+            
+            # Cleanup
+            for p in procs:
+                try: 
+                    p.terminate() 
+                    p.wait(timeout=0.1)
+                except: pass
+
+        except Exception as e:
+            # print(f"Layer stats error {l_id}: {e}")
+            pass
+            
+        # Normalize
+        max_val = max(distribution) if any(v > 0 for v in distribution) else 0
+        norm_dist = [v / max_val if max_val > 0 else 0 for v in distribution]
+
+        return l_id, {"count": count, "distribution": norm_dist}
 
 class LogSession:
     """Encapsulates state for a single log file session."""
@@ -602,29 +643,8 @@ class FileBridge(QObject):
                         session.layer_instances.append(inst)
 
             # Update highlights immediately for read_processed_lines
+            # Legacy manual highlight extraction removed in favor of layer.highlight_line()
             session.highlight_patterns = []
-            from loglayer.builtin.highlight import HighlightLayer
-            
-            for inst in session.layer_instances:
-                # Use class name check to be resilient to import differences
-                if inst.__class__.__name__ == 'HighlightLayer':
-                    query = getattr(inst, 'query', '')
-                    if not query: continue
-                    try:
-                        flags = re.IGNORECASE if not getattr(inst, 'caseSensitive', False) else 0
-                        is_regex = getattr(inst, 'regex', False)
-                        pattern = query if is_regex else re.escape(query)
-                        
-                        # Add word boundary if wholeWord is supported and enabled
-                        if getattr(inst, 'wholeWord', False):
-                            pattern = fr"\b{pattern}\b"
-
-                        session.highlight_patterns.append({
-                            'regex': re.compile(pattern, flags),
-                            'color': getattr(inst, 'color', '#ff0000'),
-                            'opacity': getattr(inst, 'opacity', 100)
-                        })
-                    except: pass
 
             # Start pipeline with instances
             self._start_pipeline(file_id, session.layer_instances)
@@ -683,7 +703,7 @@ class FileBridge(QObject):
 
         # Start Stats (Currently using legacy logic, will unify later)
         if any(l.get('enabled') and l.get('type') in ['HIGHLIGHT', 'FILTER', 'LEVEL'] for l in session.layers):
-            stat_worker = StatsWorker(self._rg_path, session.layers, session.path, len(session.line_offsets))
+            stat_worker = StatsWorker(self._rg_path, session.layer_instances, session.path, len(session.line_offsets))
             session.workers['stats'] = stat_worker
             stat_worker.finished.connect(lambda stats: self.statsFinished.emit(file_id, stats))
             stat_worker.start()
@@ -781,13 +801,19 @@ class FileBridge(QObject):
                     
                     highlights = []
                     
-                    # 1. Add highlights from defined layers
-                    for p in session.highlight_patterns:
-                        for m in p['regex'].finditer(content):
-                            highlights.append({
-                                "start": m.start(), "end": m.end(),
-                                "color": p['color'], "opacity": p['opacity']
-                            })
+                    # Apply Logic Stage Transformations (ReplaceLayer etc.)
+                    # We reuse the instances from the session
+                    # Note: We do NOT filter here, as indices are already determined by the pipeline.
+                    # We only apply transformations.
+                    logic_layers = [l for l in session.layer_instances if l.stage == LayerStage.LOGIC]
+                    
+                    for layer in logic_layers:
+                        content = layer.process_line(content)
+
+                    # Highlight layers (Decor Stage or just Logic Stage logic like HighlightLayer)
+                    for layer in reversed(session.layer_instances):
+                        hls = layer.highlight_line(content)
+                        if hls: highlights.extend(hls)
                     
                     # 2. Add volatile highlight for the active search query
                     if session.search_config and session.search_config.get('query'):

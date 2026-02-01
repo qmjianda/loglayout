@@ -2,7 +2,7 @@
 import React from 'react';
 import { LayerUIField } from '../../types';
 import { SearchInput } from '../SearchInput';
-import { ColorPicker } from '../layer-configs/ColorPicker';
+import { ColorPicker } from './ColorPicker';
 
 interface InputMapperProps {
     field: LayerUIField;

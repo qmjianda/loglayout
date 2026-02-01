@@ -117,6 +117,8 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
 
     // Auto-expand active file ONLY when first opened (not interacted with yet)
     // This effect only sets to true if the file has never been toggled (undefined state)
+    // Auto-expand logic removed to enforce "collapse all by default" behavior
+    /*
     const prevActiveFileIdRef = useRef<string | null>(null);
     React.useEffect(() => {
         // Only auto-expand when switching TO a different file that hasn't been toggled
@@ -127,6 +129,7 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
             prevActiveFileIdRef.current = activeFileId;
         }
     }, [activeFileId]);
+    */
 
     const toggleSection = (section: SectionId) => {
         setCollapsedSections(prev => ({ ...prev, [section]: !prev[section] }));
@@ -239,19 +242,12 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
         <div className="flex-1 flex flex-col overflow-hidden">
             {/* 全局工具栏 (Actions for Active File) */}
             <div className="shrink-0 p-2 bg-[#2d2d2d] border-b border-[#111] flex flex-wrap gap-1">
-                {/* 图层操作 */}
-                <button onClick={() => onAddLayer(LayerType.FOLDER)} disabled={!activeFileId} className={`w-6 h-6 flex items-center justify-center rounded ${activeFileId ? 'hover:bg-[#444] text-gray-400' : 'opacity-30 cursor-not-allowed'}`} title="添加文件夹"><svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" /></svg></button>
-                <button onClick={() => onAddLayer(LayerType.FILTER)} disabled={!activeFileId} className={`w-6 h-6 flex items-center justify-center rounded ${activeFileId ? 'hover:bg-[#444] text-blue-400' : 'opacity-30 cursor-not-allowed'}`} title="添加内容过滤"><svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M3 4h18l-7 9v6l-4 2V13L3 4z" /></svg></button>
-                <button onClick={() => onAddLayer(LayerType.HIGHLIGHT)} disabled={!activeFileId} className={`w-6 h-6 flex items-center justify-center rounded ${activeFileId ? 'hover:bg-[#444] text-yellow-400' : 'opacity-30 cursor-not-allowed'}`} title="添加高亮"><svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 21a9 9 0 110-18 9 9 0 010 18z" /></svg></button>
-                <button onClick={() => onAddLayer(LayerType.TIME_RANGE)} disabled={!activeFileId} className={`w-6 h-6 flex items-center justify-center rounded ${activeFileId ? 'hover:bg-[#444] text-purple-400' : 'opacity-30 cursor-not-allowed'}`} title="添加时间及范围"><svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg></button>
-                <button onClick={() => onAddLayer(LayerType.LEVEL)} disabled={!activeFileId} className={`w-6 h-6 flex items-center justify-center rounded ${activeFileId ? 'hover:bg-[#444] text-red-400' : 'opacity-30 cursor-not-allowed'}`} title="添加等级过滤"><svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg></button>
-                <button onClick={() => onAddLayer(LayerType.TRANSFORM)} disabled={!activeFileId} className={`w-6 h-6 flex items-center justify-center rounded ${activeFileId ? 'hover:bg-[#444] text-orange-400' : 'opacity-30 cursor-not-allowed'}`} title="添加转换"><svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path d="M4 4h16v16H4V4zm4 4h8v8H8V8z" /></svg></button>
 
-                <div className="h-4 w-px bg-white/10 mx-1 self-center" />
-
-                {/* Undo/Redo */}
+                {/* Undo/Redo - Left aligned for quick access */}
                 <button onClick={onUndo} disabled={!canUndo} className={`w-6 h-6 flex items-center justify-center rounded ${canUndo ? 'hover:bg-[#444] text-gray-300' : 'opacity-30 cursor-not-allowed text-gray-600'}`} title="撤销 (Ctrl+Z)"><svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" /></svg></button>
                 <button onClick={onRedo} disabled={!canRedo} className={`w-6 h-6 flex items-center justify-center rounded ${canRedo ? 'hover:bg-[#444] text-gray-300' : 'opacity-30 cursor-not-allowed text-gray-600'}`} title="重做 (Ctrl+Y)"><svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M21 10H11a8 8 0 00-8 8v2M21 10l-6 6m6-6l-6-6" /></svg></button>
+
+
             </div>
 
             {/* 1. 已打开文件 & 图层 (Flattened List with nested layers) */}
@@ -276,7 +272,7 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
                             <div className="p-4 text-center text-[10px] text-gray-500 italic">暂无文件 (从资源管理器中选取)</div>
                         ) : (
                             files.map(file => {
-                                const isExpanded = expandedFiles[file.id] !== false;
+                                const isExpanded = expandedFiles[file.id] === true;
                                 const isActive = file.id === activeFileId;
                                 const hasLayers = file.layers && file.layers.length > 0;
 
@@ -289,7 +285,7 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
                                                 onFileActivate(file.id);
                                                 // Toggle expand: if undefined (default expanded) or true → false, if false → true
                                                 setExpandedFiles(prev => {
-                                                    const currentlyExpanded = prev[file.id] !== false;
+                                                    const currentlyExpanded = prev[file.id] === true;
                                                     return { ...prev, [file.id]: !currentlyExpanded };
                                                 });
                                             }}

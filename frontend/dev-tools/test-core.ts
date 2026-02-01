@@ -1,5 +1,5 @@
 
-import { LayerType, LogLayer, LogLine } from './types';
+import { LayerType, LogLayer } from '../src/types';
 
 // Mock FileData structure matching App.tsx
 interface FileData {

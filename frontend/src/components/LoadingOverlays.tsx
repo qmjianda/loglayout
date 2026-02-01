@@ -6,7 +6,7 @@ interface IndexingOverlayProps {
 }
 
 export const IndexingOverlay: React.FC<IndexingOverlayProps> = ({ progress, fileName }) => (
-    <div className="absolute inset-x-0 bottom-0 top-8 z-50 flex flex-col items-center justify-center bg-[#1e1e1e]/80 backdrop-blur-sm transition-all">
+    <div className="absolute inset-x-0 bottom-0 top-0 z-50 flex flex-col items-center justify-center bg-[#1e1e1e]/80 backdrop-blur-sm transition-all">
         <div className="flex flex-col items-center p-8 rounded-2xl bg-[#252526] border border-white/10 shadow-2xl scale-in-center overflow-hidden relative">
             <div className="absolute inset-0 bg-blue-500/5 animate-pulse" />
             <div className="relative w-24 h-24 mb-6">
@@ -34,7 +34,7 @@ interface FileLoadingSkeletonProps {
 }
 
 export const FileLoadingSkeleton: React.FC<FileLoadingSkeletonProps> = ({ fileName }) => (
-    <div className="absolute inset-x-0 bottom-0 top-8 z-40 bg-[#1e1e1e] overflow-hidden">
+    <div className="absolute inset-x-0 bottom-0 top-0 z-40 bg-[#1e1e1e] overflow-hidden">
         {/* Animated gradient shimmer overlay */}
         <div className="absolute inset-0 pointer-events-none">
             <div

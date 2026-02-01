@@ -349,13 +349,13 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      {/* Progress bar */}
-      {(isProcessing || isLayerProcessing) && (
-        <div className="h-0.5 w-full bg-[#111] overflow-hidden relative">
+      {/* Progress bar - Absolute positioned to prevent layout shift */}
+      <div className="absolute top-9 left-0 right-0 h-0.5 z-50 pointer-events-none">
+        {(isProcessing || isLayerProcessing) && (
           <div className={`h-full bg-blue-500 transition-all duration-300 ${isLayerProcessing ? 'animate-pulse' : ''}`}
             style={{ width: isLayerProcessing ? '100%' : `${loadingProgress}%` }} />
-        </div>
-      )}
+        )}
+      </div>
 
       <div className="flex-1 flex overflow-hidden">
         <Sidebar activeView={activeView} onSetActiveView={setActiveView} />
@@ -503,12 +503,10 @@ const App: React.FC = () => {
                           </div>
                         </div>
 
-                        {/* Loading States - Mutually exclusive */}
-                        {paneFileId === activeFileId && isProcessing && operationStatus?.op === 'indexing' ? (
-                          <IndexingOverlay progress={loadingProgress} fileName={activeFile?.name || ''} />
-                        ) : paneFileId && loadingFileIds.has(paneFileId) && (
+                        {/* Loading States - Unified to use FileLoadingSkeleton */}
+                        {(paneFileId && loadingFileIds.has(paneFileId)) || (paneFileId === activeFileId && isProcessing && operationStatus?.op === 'indexing') ? (
                           <FileLoadingSkeleton fileName={files.find(f => f.id === paneFileId)?.name} />
-                        )}
+                        ) : null}
 
                         {/* Log Viewer or Empty State */}
                         {paneFileId ? (

@@ -80,7 +80,11 @@ graph TD
 - **Startup Reliability (2026-01-31)**: Optimized the application initialization by replacing hardcoded `QTimer` delays for CLI file loading with a formal handshake protocol.
 - **Loading Status Persistence**: Fixed a UI issue where the status bar would prematurely show "Ready" while files were still being opened or indexed.
 - **Visual Identity**: Generated integrated premium icon and Windows taskbar support.
-- **Codebase Cleanup & Optimization (2026-01-31)**: 
+- **Codebase Cleanup & Optimization (2026-01-31)**:
+    - **Highlight Layer Fixes**:
+        - **Stacking Order**: Corrected rendering order so top UI layers properly overlay bottom layers (reverse iteration in `bridge.py`).
+        - **Stats Restoration**: Fixed a regression where match counts were missing due to incorrect data type passing (Dict vs Object) to `StatsWorker`.
+        - **Performance Optimization**: Parallelized `StatsWorker` using `ThreadPoolExecutor` to calculate match counts for multiple layers concurrently, significantly reducing update latency for complex configurations.
     - **Backend**: DRYed pipeline and filter logic in `bridge.py`. Unified recursive file discovery. Improved worker retirement system to be fully asynchronous.
     - **Frontend**: Refactored `App.tsx` by extracting complex loading UI into `LoadingOverlays.tsx`. Unified multi-channel file adding logic into a single `addNewFiles` helper. Simplified bridge initialization in `bridge_client.ts`.
     - **Architecture**: Solidified the session lifecycle management, ensuring workers are properly retired when files are closed or replaced.
@@ -101,3 +105,10 @@ graph TD
 - **Intelligent Reordering**: Improved `useLayerManagement.ts` with circular drop prevention and precise index calculation for complex layer hierarchies.
 - **UI Interaction Polish**: Added drag handles, improved hover effects for sorting, and fixed accidental text selection during drag operations.
 - **Layer Sync Persistence**: Implemented backend `sync_layers` and refined the frontend call to ensure layer order and hierarchy are persisted with the workspace configuration.
+- **Codebase Cleanup**: Removed obsolete `layer-configs` directory and unused `ExplorerPanel.tsx`. Organized development tools into `frontend/dev-tools`.
+- **Component Refactoring**: Localized `ColorPicker` implementation to `DynamicUI`, eliminating dependency on legacy code.
+- **Type Safety**: Fixed signal signature mismatch in `useBridge` for `pipelineFinished` to ensure correct type handling.
+- **UI Stability & Polish**:
+    - **Visual Glitch Fix**: Resolved the "UI Jumping" and "Black Line" issue during loading and layer toggling by using absolute positioning for `LoadingOverlays` and the progress bar.
+    - **Default Collapsed State**: Enhanced `UnifiedPanel` and `useWorkspaceConfig` to ensure all file lists and restored layers start in a collapsed state by default, reducing initial cognitive load.
+    - **Layout Optimization**: Removed excessive bottom padding in `LayersPanel` to eliminate awkward blank spaces between file sections.

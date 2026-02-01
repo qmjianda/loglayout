@@ -6,7 +6,8 @@
  */
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { initBridge, FileBridgeAPI } from '../bridge_client';
+import { initBridge } from '../bridge_client';
+import { FileBridgeAPI } from '../types';
 
 // Types for bridge callbacks
 export interface FileLoadedInfo {
@@ -19,7 +20,7 @@ export interface FileLoadedInfo {
 export interface PipelineResult {
     fileId: string;
     newTotal: number;
-    matches: number[];
+    matchCount: number;
 }
 
 export interface LayerStats {
@@ -37,7 +38,7 @@ export interface OperationStatus {
 
 export interface BridgeCallbacks {
     onFileLoaded?: (fileId: string, info: FileLoadedInfo) => void;
-    onPipelineFinished?: (fileId: string, newTotal: number, matches: number[]) => void;
+    onPipelineFinished?: (fileId: string, newTotal: number, matchCount: number) => void;
     onStatsFinished?: (fileId: string, stats: LayerStats) => void;
     onOperationStarted?: (fileId: string, op: string) => void;
     onOperationProgress?: (fileId: string, op: string, progress: number) => void;
@@ -86,13 +87,8 @@ export function useBridge(callbacks: BridgeCallbacks): UseBridgeReturn {
             });
 
             // pipelineFinished signal
-            api.pipelineFinished?.connect?.((fileId: string, newTotal: number, resultsJson: string) => {
-                try {
-                    const matches = JSON.parse(resultsJson);
-                    callbacksRef.current.onPipelineFinished?.(fileId, newTotal, matches);
-                } catch (e) {
-                    console.error('[useBridge] Pipeline parse error:', e);
-                }
+            api.pipelineFinished?.connect?.((fileId: string, newTotal: number, matchCount: number) => {
+                callbacksRef.current.onPipelineFinished?.(fileId, newTotal, matchCount);
             });
 
             // statsFinished signal
