@@ -118,18 +118,13 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
     // Auto-expand active file ONLY when first opened (not interacted with yet)
     // This effect only sets to true if the file has never been toggled (undefined state)
     // Auto-expand logic removed to enforce "collapse all by default" behavior
-    /*
     const prevActiveFileIdRef = useRef<string | null>(null);
-    React.useEffect(() => {
-        // Only auto-expand when switching TO a different file that hasn't been toggled
+    useEffect(() => {
         if (activeFileId && activeFileId !== prevActiveFileIdRef.current) {
-            if (expandedFiles[activeFileId] === undefined) {
-                setExpandedFiles(prev => ({ ...prev, [activeFileId]: true }));
-            }
-            prevActiveFileIdRef.current = activeFileId;
+            setExpandedFiles(prev => ({ ...prev, [activeFileId]: true }));
         }
+        prevActiveFileIdRef.current = activeFileId;
     }, [activeFileId]);
-    */
 
     const toggleSection = (section: SectionId) => {
         setCollapsedSections(prev => ({ ...prev, [section]: !prev[section] }));
@@ -137,7 +132,10 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
 
     const toggleFile = (fileId: string, e: React.MouseEvent) => {
         e.stopPropagation();
-        setExpandedFiles(prev => ({ ...prev, [fileId]: !prev[fileId] }));
+        setExpandedFiles(prev => ({
+            ...prev,
+            [fileId]: prev[fileId] === true ? false : true
+        }));
     };
 
     const formatSize = (bytes: number) => {

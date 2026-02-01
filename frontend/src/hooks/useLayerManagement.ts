@@ -231,7 +231,18 @@ export function useLayerManagement({
             config: { ...defaultConfig, ...initialConfig }
         };
 
-        updateLayers(prev => [...prev, newLayer]);
+        updateLayers(prev => {
+            const next = [...prev];
+            // If added to a folder, ensure folder is expanded
+            if (parentId) {
+                const parentIdx = next.findIndex(l => l.id === parentId);
+                if (parentIdx >= 0) {
+                    next[parentIdx] = { ...next[parentIdx], isCollapsed: false };
+                }
+            }
+            next.push(newLayer);
+            return next;
+        });
         setSelectedLayerId(newId);
     }, [selectedLayerId, layers, updateLayers, registry]);
 

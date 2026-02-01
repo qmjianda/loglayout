@@ -16,12 +16,14 @@ class LayerRegistry:
         from loglayer.builtin.highlight import HighlightLayer
         from loglayer.builtin.replace import ReplaceLayer
         from loglayer.builtin.range import RangeLayer
+        from loglayer.builtin.time import TimeLayer
         
         self.register_builtin("FILTER", FilterLayer)
         self.register_builtin("LEVEL", LevelLayer)
         self.register_builtin("HIGHLIGHT", HighlightLayer)
         self.register_builtin("TRANSFORM", ReplaceLayer)
         self.register_builtin("RANGE", RangeLayer)
+        self.register_builtin("TIME_RANGE", TimeLayer)
 
     def register_builtin(self, type_id, cls):
         self.builtin_layers[type_id] = cls
