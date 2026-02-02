@@ -107,41 +107,21 @@ class IndexingWorker(CustomThread):
 
     def run(self):
         try:
-            num_threads = min(os.cpu_count() or 4, 8)
-            chunk_size = self.size // num_threads
-            with ThreadPoolExecutor(max_workers=num_threads) as executor:
-                futures = []
-                for i in range(num_threads):
-                    if not self._is_running: break
-                    start = i * chunk_size
-                    end = self.size if i == num_threads - 1 else (i + 1) * chunk_size
-                    futures.append(executor.submit(self._index_chunk, start, end))
-                results = []
-                total_futures = len(futures)
-                for idx, f in enumerate(futures):
-                    if not self._is_running: break
-                    results.append(f.result())
-                    self.progress.emit((idx + 1) / total_futures * 100)
-            if not self._is_running: return
-            total_offsets = array.array('Q', [0])
-            for chunk_offsets in results:
-                total_offsets.extend(chunk_offsets)
-            if len(total_offsets) > 1 and total_offsets[-1] >= self.size:
-                total_offsets.pop()
-            self.finished.emit(total_offsets)
+            # Using re.finditer on mmap is significantly faster in Python as it's implemented in C.
+            # Even for extremely large files, it avoids the GIL bottleneck of Python loops.
+            start_time = time.time()
+            offsets = array.array('Q', [0])
+            for m in re.finditer(b'\n', self.mmap):
+                if not self._is_running: return
+                offsets.append(m.start() + 1)
+            
+            if len(offsets) > 1 and offsets[-1] >= self.size:
+                offsets.pop()
+            
+            print(f"[Indexing] Finished in {time.time() - start_time:.4f}s")
+            self.finished.emit(offsets)
         except Exception as e:
             self.error.emit(str(e))
-
-    def _index_chunk(self, start, end):
-        offsets = array.array('Q')
-        pos = start
-        while self._is_running:
-            pos = self.mmap.find(b'\n', pos, end)
-            if pos == -1: break
-            pos += 1
-            if pos < self.size: offsets.append(pos)
-            else: break
-        return offsets
 
 class PipelineWorker(CustomThread):
     finished = Signal(object, object)
@@ -159,8 +139,9 @@ class PipelineWorker(CustomThread):
 
     def run(self):
         try:
-            cmd_chain = []
             native_layers = [l for l in self.layers if l.stage == LayerStage.NATIVE]
+            logic_layers = [l for l in self.layers if l.stage == LayerStage.LOGIC]
+            
             s_args = None
             if self.search and self.search.get('query'):
                 s_args = []
@@ -168,35 +149,45 @@ class PipelineWorker(CustomThread):
                 else: s_args.append("-F")
                 if not self.search.get('caseSensitive'): s_args.append("-i")
                 s_args.append(self.search['query'])
+
+            cmd_chain = []
+            
+            # Helper to create rg command
+            def build_rg_cmd(args, is_first, is_last_native):
+                cmd = [self.rg_path, "--no-heading", "--no-filename", "--color", "never"]
+                if is_first:
+                    cmd.append("--line-number")
+                
+                # OPTIMIZATION: If we have NO logic layers, we only need line numbers to index back into mmap.
+                # If we HAVE logic layers, they need the content to filter.
+                if not logic_layers:
+                    cmd.extend(["-o", "^"])
+                elif not is_last_native:
+                    # Intermediate pipes only need line numbers to pass down the match
+                    cmd.extend(["-o", "^"])
+                
+                cmd.extend(args)
+                if is_first:
+                    cmd.append(self.file_path)
+                else:
+                    cmd.append("-")
+                return cmd
+
+            # Build the chain
             if not native_layers and not s_args:
-                cmd_chain.append([self.rg_path, "--line-number", "--no-heading", "--no-filename", "--color", "never", "", self.file_path])
+                # Default view (all lines)
+                cmd_chain.append(build_rg_cmd([""], True, True))
             else:
                 for i, layer in enumerate(native_layers):
                     rg_args = layer.get_rg_args()
                     if not rg_args: continue
-                    if i == 0:
-                        cmd_chain.append([self.rg_path, "--line-number", "--no-heading", "--no-filename", "--color", "never"] + rg_args + [self.file_path])
-                    else:
-                        query = rg_args[-1]
-                        is_regex = "-e" in rg_args
-                        is_case_insensitive = "-i" in rg_args
-                        pattern = query if is_regex else re.escape(query)
-                        case_flag = "(?i)" if is_case_insensitive else ""
-                        wrapper_pattern = f"^{case_flag}[^:]*:.*{pattern}"
-                        cmd_chain.append([self.rg_path, "--no-heading", "--no-filename", "--color", "never", wrapper_pattern, "-"])
+                    is_last_native = (i == len(native_layers) - 1) and (not s_args)
+                    cmd_chain.append(build_rg_cmd(rg_args, i == 0, is_last_native))
+                
                 if s_args:
-                    query = s_args[-1]
-                    is_regex = "-e" in s_args
-                    is_case_insensitive = "-i" in s_args
-                    pattern = query if is_regex else re.escape(query)
-                    case_flag = "(?i)" if is_case_insensitive else ""
-                    wrapper_pattern = f"^{case_flag}[^:]*:.*{pattern}"
-                    if not cmd_chain:
-                        cmd_chain.append([self.rg_path, "--line-number", "--no-heading", "--no-filename", "--color", "never"] + s_args + [self.file_path])
-                    else:
-                        cmd_chain.append([self.rg_path, "--no-heading", "--no-filename", "--color", "never", wrapper_pattern, "-"])
-            if not cmd_chain:
-                cmd_chain.append([self.rg_path, "--line-number", "--no-heading", "--no-filename", "--color", "never", "", self.file_path])
+                    is_first = len(cmd_chain) == 0
+                    cmd_chain.append(build_rg_cmd(s_args, is_first, True))
+
             self._processes = []
             last_stdout = None
             for i, cmd in enumerate(cmd_chain):
@@ -204,12 +195,13 @@ class PipelineWorker(CustomThread):
                 self._processes.append(p)
                 if i > 0 and last_stdout: last_stdout.close()
                 last_stdout = p.stdout
-            logic_layers = [l for l in self.layers if l.stage == LayerStage.LOGIC]
+            
             for l in logic_layers: l.reset()
             visible_indices = array.array('I')
             search_matches = array.array('I')
             v_idx = 0
             line_count = 0
+            
             for line_bytes in last_stdout:
                 if not self._is_running: break
                 line_str = line_bytes.decode('utf-8', errors='ignore')
@@ -219,24 +211,34 @@ class PipelineWorker(CustomThread):
                     physical_idx = int(parts[0]) - 1
                     content = parts[1]
                 except ValueError: continue
+                
                 is_visible = True
-                for layer in logic_layers:
-                    content = layer.process_line(content)
-                    if not layer.filter_line(content, index=physical_idx):
-                        is_visible = False
-                        break
+                if logic_layers:
+                    for layer in logic_layers:
+                        content = layer.process_line(content)
+                        if not layer.filter_line(content, index=physical_idx):
+                            is_visible = False
+                            break
+                
                 if is_visible:
                     visible_indices.append(physical_idx)
                     if self.search and self.search.get('query'):
                         search_matches.append(v_idx)
                     v_idx += 1
+                
                 line_count += 1
                 if line_count % 10000 == 0: self.progress.emit(0)
+            
             if self._is_running:
                 self.finished.emit(visible_indices, search_matches)
         except Exception as e:
             if self._is_running: self.error.emit(str(e))
         finally:
+            for p in self._processes:
+                try: 
+                    if p.poll() is None: p.terminate()
+                    p.wait(timeout=0.1)
+                except: pass
             for p in self._processes:
                 try: 
                     if p.poll() is None: p.terminate()
@@ -477,6 +479,9 @@ class FileBridge:
             return True
         except Exception as e:
             print(f"Sync all error: {file_id}: {e}")
+            # Safeguard: If sync fails, ensure we reset status
+            self.operationError.emit(file_id, "sync", str(e))
+            self.operationStatusChanged.emit(file_id, "ready", 100)
             return False
 
     def _start_pipeline(self, file_id, layer_instances):
