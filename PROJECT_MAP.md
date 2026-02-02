@@ -24,6 +24,8 @@ graph TD
 | **Dynamic UI** | `frontend/src/components/DynamicUI/` | `InputMapper`, `DynamicForm`: Schema-driven configuration UI | `types.ts` |
 | **Log Viewer** | `frontend/src/components/LogViewer.tsx` | Virtual list, scroll scaling, processed line rendering | `bridge_client.ts` |
 | **State Orchest.** | `frontend/src/App.tsx` | Global file state, UI layout, hook management | All Components |
+| **Tests & Logs** | `tests/` | Unit tests, scale tests, and **test log samples** | `pytest`, `tests/logs/` |
+| **Dev Tools** | `tools/` | Build and packaging scripts | `PyInstaller`, `npm` |
 
 ## 3. Core Feature List
 - [x] **Large File Loading**: 1GB+ indexing via `mmap` offsets.
@@ -38,18 +40,12 @@ graph TD
 - **Virtualization Sync**: `LogViewer` viewport depends on `read_processed_lines` REST endpoint.
 - **Layer Sync**: Frontend calls `sync_all` REST endpoint on layer config change.
 
-## 5. Change Log (2026-02-02) - PyQt to pywebview Refactor
-- **Architecture Shift**: Decoupled the backend from PyQt. Replaced `QWebChannel` with a dual-protocol `REST` (commands) + `WebSockets` (signals) model.
-- **Backend Refactoring**: 
-    - Moved from `PyQt6` to `FastAPI` and `uvicorn`.
-    - Replaced `QThread` with a standard Python `threading.Thread` wrapper (`CustomThread`).
-    - Implemented a pure Python `Signal` class for event broadcasting.
-    - Updated `bridge.py` to be a plain Python class, using `pywebview`'s `create_file_dialog` for native OS interaction.
-- **Frontend Refactoring**:
-    - Rewrote `bridge_client.ts` to use `fetch` for all API calls and a persistent `WebSocket` for signal reception.
-    - Implemented a client-side `Signal` emulator to maintain compatibility with existing `connect()` patterns.
-    - Removed `qwebchannel.js` dependency.
-- **Desktop Shell**: Migrated the GUI container from `PyQt6.QWebEngineView` to `pywebview`.
-- **Dependency Optimization**: Removed `qt_compat.py` and all `PyQt6` related code, significantly reducing the application's footprint and complexity.
+## 5. Change Log (2026-02-02) 
+- **Architecture Refactor**: Migrated from PyQt to FastAPI + pywebview.
+- **Project Structure Reorganization**: 
+    - Consolidated all `.log` files into `tests/logs/`.
+    - Moved test scripts to `tests/`.
+    - Moved packaging scripts to `tools/`.
+    - Cleaned up root directory by removing unused metadata and ignoring test logs.
 
 [... previous change logs ...]

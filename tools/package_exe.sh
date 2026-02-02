@@ -6,7 +6,7 @@ if ! command -v python3 &> /dev/null; then
     exit 1
 fi
 
-python3 tools/package_offline.py --exe
+python3 "$(dirname "$0")/package_offline.py" --exe
 
 if [ -t 0 ]; then
     echo "Press enter to exit..."

@@ -48,8 +48,8 @@ pip install fastapi uvicorn websockets pywebview
 2. `python backend/main.py`
 
 **Standalone Packaging**:
-- **Source-based Bundle**: Run `package.bat` (Win) or `./package.sh` (Linux). Requires Python on the user's machine.
-- **Standalone EXE (Frozen)**: Run `package_exe.bat` (Win) or `./package_exe.sh` (Linux). Requires `pip install pyinstaller`. No Python required on the target machine.
+- **Source-based Bundle**: Run `tools/package.bat` (Win) or `tools/package.sh` (Linux). Requires Python on the user's machine.
+- **Standalone EXE (Frozen)**: Run `tools/package_exe.bat` (Win) or `tools/package_exe.sh` (Linux). Requires `pip install pyinstaller`. No Python required on the target machine.
 The build will be generated in `dist_offline/`.
 
 ---
@@ -98,6 +98,6 @@ pip install fastapi uvicorn websockets pywebview
 2. `python backend/main.py`
 
 **离线打包**:
-- **源码包**: 运行 `package.bat` (Win) 或 `./package.sh` (Linux)。需要目标机器安装有 Python。
-- **独立可执行程序 (Frozen)**: 运行 `package_exe.bat` (Win) 或 `./package_exe.sh` (Linux)。需要先安装 `pip install pyinstaller`。生成的程序无需 Python 即可运行。
+- **源码包**: 运行 `tools/package.bat` (Win) 或 `tools/package.sh` (Linux)。需要目标机器安装有 Python。
+- **独立可执行程序 (Frozen)**: 运行 `tools/package_exe.bat` (Win) 或 `tools/package_exe.sh` (Linux)。需要先安装 `pip install pyinstaller`。生成的程序无需 Python 即可运行。
 打包结果将生成在 `dist_offline/` 目录下。

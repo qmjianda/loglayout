@@ -8,7 +8,7 @@ if ! command -v python3 &> /dev/null; then
 fi
 
 # Run the packaging script
-python3 tools/package_offline.py
+python3 "$(dirname "$0")/package_offline.py"
 
 # Optional: keep terminal open if run via file manager
 if [ -t 0 ]; then
