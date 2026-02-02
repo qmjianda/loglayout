@@ -1,5 +1,5 @@
 /**
- * useBridge - Core hook for backend communication via QWebChannel
+ * useBridge - Core hook for backend communication via REST + WebSockets
  * 
  * This hook initializes the bridge connection and provides callback registration
  * for all backend signals. Other hooks should use the callbacks to update their state.
@@ -77,7 +77,7 @@ export function useBridge(callbacks: BridgeCallbacks): UseBridgeReturn {
             setBridgeApi(api);
 
             // fileLoaded signal
-            api.fileLoaded.connect((fileId: string, rawInfo: string) => {
+            api.fileLoaded.connect((fileId: string, rawInfo: any) => {
                 try {
                     const info = typeof rawInfo === 'string' ? JSON.parse(rawInfo) : rawInfo;
                     callbacksRef.current.onFileLoaded?.(fileId, info);
@@ -94,7 +94,7 @@ export function useBridge(callbacks: BridgeCallbacks): UseBridgeReturn {
             // statsFinished signal
             api.statsFinished?.connect?.((fileId: string, statsJson: string) => {
                 try {
-                    const stats = JSON.parse(statsJson);
+                    const stats = typeof statsJson === 'string' ? JSON.parse(statsJson) : statsJson;
                     callbacksRef.current.onStatsFinished?.(fileId, stats);
                 } catch (e) {
                     console.error('[useBridge] Stats parse error:', e);

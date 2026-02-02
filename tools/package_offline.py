@@ -78,15 +78,8 @@ def package_app():
             subprocess.check_call("pyinstaller --version", shell=True)
             add_data_sep = ";" if sys.platform == "win32" else ":"
             
-            # Identify active Qt to avoid PyInstaller multiple bindings error
-            active_qt = None
-            sys.path.append(str(backend_dir))
-            try:
-                from qt_compat import QT_API
-                active_qt = QT_API
-                print(f"Detected active Qt API for bundling: {active_qt}")
-            except Exception as e:
-                print(f"Could not detect active Qt API: {e}. PyInstaller might fail if multiple Qt libs are installed.")
+            # Using browser-based architecture, no Qt binding detections needed
+            print(f"Bundling FastAPI + pywebview stack...")
             
             # Use root_dir for data paths since we are running from there
             pyinst_cmd = [
@@ -94,23 +87,21 @@ def package_app():
                 "--noconfirm",
                 "--onedir",
                 "--windowed",
-                f"--add-data=dist{add_data_sep}www", # Use build we just made
-                f"--add-data=bin{add_data_sep}bin",
+                f"--add-data=dist{add_data_sep}www", # Bundle the built static files
+                f"--add-data=bin{add_data_sep}bin",   # Bundle ripgrep
                 "--paths=backend",
-                "--name=LogLayer"
+                "--name=LogLayer",
+                "--clean" # Clean cache for a fresh build
             ]
 
-            # Exclude other Qt bindings to avoid conflicts
-            if active_qt:
-                all_qt = ["PyQt6", "PySide6", "PyQt5", "PySide2"]
-                for qt_lib in all_qt:
-                    if qt_lib.lower() != active_qt.lower():
-                        pyinst_cmd.append(f"--exclude-module={qt_lib}")
+            # Since we removed Qt, we can explicitly exclude those large modules to reduce size
+            excluded_modules = ["PyQt6", "PySide6", "PyQt5", "PySide2", "matplotlib", "PIL", "tkinter"]
+            for mod in excluded_modules:
+                pyinst_cmd.append(f"--exclude-module={mod}")
             
             pyinst_cmd.append("backend/main.py")
             
             print(f"Running: {' '.join(pyinst_cmd)}")
-            # We run in root_dir, output will be in root_dir/dist and root_dir/build
             subprocess.check_call(" ".join(pyinst_cmd), shell=True, cwd=root_dir)
             
             # Move results to dist_offline
@@ -144,6 +135,10 @@ if %errorlevel% neq 0 (
     pause
     exit /b 1
 )
+
+:: Ensure dependencies are installed if running from source
+:: We don't do this automatically to avoid startup lag, but here for reference
+:: python -m pip install fastapi uvicorn websockets pywebview
 
 start "LogLayer" /B pythonw app\\main.py %*
 """

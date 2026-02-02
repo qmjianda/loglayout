@@ -1,246 +1,258 @@
-import sys
 import os
-from qt_compat import (
-    QtCore, QtWidgets, QtGui, QtWebEngineWidgets, QtWebEngineCore, QtWebChannel,
-    pyqtSlot, pyqtSignal, Signal, Slot
-)
-from qt_compat import (
-    QUrl, QObject, QApplication, QMainWindow, QIcon,
-    QWebEngineView, QWebEngineSettings, QWebEnginePage, QWebChannel
-)
-# 导入核心桥接类和工具函数
+import sys
+import json
+import asyncio
+import threading
+import uvicorn
+import webview
+import argparse
+import time
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Body, Request
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import List, Optional
+from contextlib import asynccontextmanager
+
+# Import refactored bridge
 from bridge import FileBridge, get_log_files_recursive
 
-class CustomWebEnginePage(QWebEnginePage):
-    """
-    自定义 Web 页面类，用于捕获 JavaScript 控制台输出并打印到 Python 控制台。
-    方便调试前端逻辑。
-    """
-    def javaScriptConsoleMessage(self, level, message, lineNumber, sourceID):
-        print(f"JS [{lineNumber}]: {message} ({sourceID})")
+# Global bridge instance
+bridge = FileBridge()
 
-class Bridge(QObject):
-    """
-    通用桥接对象，处理与具体文件无关的全局信号。
-    """
-    # 定义一个信号，可以发送给 React
-    fileOpened = pyqtSignal(str)
-    
+# Event loop reference for thread-safe broadcasting
+main_loop = None
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global main_loop
+    main_loop = asyncio.get_running_loop()
+    print("[Server] Event loop captured for signal broadcasting.")
+    yield
+    print("[Server] Shutting down.")
+
+# 1. Initialize FastAPI with lifespan
+app = FastAPI(lifespan=lifespan)
+
+# Enable CORS for development
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# WebSocket Manager
+class ConnectionManager:
     def __init__(self):
-        super().__init__()
+        self.active_connections: List[WebSocket] = []
 
-    @pyqtSlot(result=str)
-    def get_platform(self):
-        """
-        供前端调用的方法：获取当前操作系统平台名称。
-        """
-        return sys.platform
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
 
-class CustomWebView(QWebEngineView):
-    """
-    自定义 Web 视图，支持拖拽文件。
-    """
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setAcceptDrops(True)  # 启用拖放支持
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
 
-    def dragEnterEvent(self, event):
-        # 当拖入内容包含 URL (文件路径) 时接受
-        if event.mimeData().hasUrls():
-            event.accept()
-        else:
-            event.ignore()
-
-    def dragMoveEvent(self, event):
-        if event.mimeData().hasUrls():
-            event.accept()
-        else:
-            event.ignore()
-
-    def dropEvent(self, event):
-        """
-        处理文件拖放事件
-        """
-        urls = event.mimeData().urls()
-        if urls:
-            window = self.window()
-            # 将拖放的文件转交给主窗口处理
-            if hasattr(window, 'handle_dropped_urls'):
-                window.handle_dropped_urls(urls)
-
-
-class MainWindow(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("LogLayer")
-        self.resize(1200, 800)
-        
-        # 设置窗口图标
-        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icon.png")
-        if os.path.exists(icon_path):
-            self.setWindowIcon(QIcon(icon_path))
-        # 开启远程调试端口，方便通过 Chrome 浏览器调试嵌入的 WebView
-        os.environ['QTWEBENGINE_REMOTE_DEBUGGING'] = '12345'
-
-        # 初始化 Web 视图
-        self.browser = CustomWebView(self)
-        self.browser.setPage(CustomWebEnginePage(self.browser))
-        self.setCentralWidget(self.browser)
-
-        # 启用开发者选项和本地文件访问权限
-        settings = self.browser.settings()
-        try:
-            # 兼容 Qt6 和 Qt5 的属性名差异
-            attr = getattr(QWebEngineSettings.WebAttribute, 'LocalContentCanAccessFileUrls', None) if hasattr(QWebEngineSettings, 'WebAttribute') else getattr(QWebEngineSettings, 'LocalContentCanAccessFileUrls', None)
-            if attr is not None:
-                settings.setAttribute(attr, True)
-        except Exception as e:
-            print(f"Warning: Could not set LocalContentCanAccessFileUrls: {e}")
-
-        # 配置 WebChannel 通信桥梁
-        self.channel = QWebChannel()
-        self.bridge = Bridge()
-        self.file_bridge = FileBridge() # 核心业务逻辑桥接器
-        
-        # 注册对象到 JS window.qt.webChannelTransport
-        self.channel.registerObject('bridge', self.bridge)
-        self.channel.registerObject('fileBridge', self.file_bridge)
-        self.browser.page().setWebChannel(self.channel)
-
-        # 加载 React 前端页面
-        # 处理 PyInstaller 打包后的路径
-        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-            base_dir = sys._MEIPASS
-        else:
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-
-        prod_index_path = os.path.join(base_dir, "www", "index.html")
-
-        if os.path.exists(prod_index_path):
-            # 生产环境：启动本地 HTTP 服务器加载构建好的静态文件
-            self.server_port = self._start_local_server(os.path.join(base_dir, "www"))
-            url = f"http://127.0.0.1:{self.server_port}/index.html"
-            print(f"Loading local frontend from: {url}")
-            self.browser.setUrl(QUrl(url))
-        else:
-            # 开发环境：加载 Vite 开发服务器
-            print("Loading dev frontend from: http://localhost:3000")
-            self.browser.setUrl(QUrl("http://localhost:3000"))
-
-        # 待处理的命令行传入路径
-        self.pending_cli_paths = []
-
-    def _start_local_server(self, root_dir):
-        """
-        启动一个微型 HTTP 服务器来托管前端静态文件。
-        在生产环境(打包后)使用，避免跨域和文件协议限制。
-        """
-        from threading import Thread
-        import socket
-        from http.server import SimpleHTTPRequestHandler, HTTPServer
-
-        class QuietHandler(SimpleHTTPRequestHandler):
-            def __init__(self, *args, **kwargs):
-                super().__init__(*args, directory=root_dir, **kwargs)
-            def log_message(self, format, *args):
-                # 屏蔽服务器日志输出，保持控制台整洁
-                pass
-
-        # 自动寻找一个空闲端口
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.bind(('127.0.0.1', 0))
-        port = sock.getsockname()[1]
-        sock.close()
-
-        server = HTTPServer(('127.0.0.1', port), QuietHandler)
-        # 在守护线程中运行服务器，随主程序退出而退出
-        thread = Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        return port
-
-    def load_cli_paths(self, paths):
-        """记录命令行传入的文件路径，等待前端准备好后再打开"""
-        self.pending_cli_paths = paths
-        self.file_bridge.frontendReady.connect(self._on_frontend_ready)
-
-    def _on_frontend_ready(self):
-        """当前端 JS 调用 bridge.frontendReady() 时触发"""
-        if not self.pending_cli_paths:
+    async def broadcast(self, message: dict):
+        if not self.active_connections:
             return
+        # Fire and forget broadcasting with robust delivery
+        for connection in list(self.active_connections):
+            try:
+                await connection.send_json(message)
+            except Exception as e:
+                print(f"[WebSocket] Broadcast error to {connection}: {e}")
+                self.disconnect(connection)
 
-        pending_files = []
-        for path in self.pending_cli_paths:
-            abs_path = os.path.abspath(path)
-            if os.path.isdir(abs_path):
-                # 如果是文件夹，递归查找日志文件
-                log_files = get_log_files_recursive(abs_path)
-                pending_files.extend([f['path'] for f in log_files])
-            elif os.path.isfile(abs_path):
-                pending_files.append(abs_path)
-        
-        if pending_files:
-            # 通知前端有多少个文件正在加载（显示进度墙）
-            self.file_bridge.pendingFilesCount.emit(len(pending_files))
-            
-            # 一个个打开文件
-            for full_path in pending_files:
-                self._open_single_file(full_path, "cli")
-        
-        # 处理完毕，清空队列
-        self.pending_cli_paths = []
+manager = ConnectionManager()
 
-    def handle_dropped_urls(self, urls):
-        """处理从系统拖入窗口的文件"""
-        for url in urls:
-            path = url.toLocalFile()
-            abs_path = os.path.abspath(path)
-            if os.path.isdir(abs_path):
-                log_files = get_log_files_recursive(abs_path)
-                for f in log_files:
-                    self._open_single_file(f['path'], "dropped")
-            elif os.path.isfile(abs_path):
-                self._open_single_file(abs_path, "dropped")
-
-    def _open_single_file(self, path, prefix):
-        """生成唯一 ID 并调用 bridge 打开文件"""
-        try:
-            stats = os.stat(path)
-            # 使用文件修改时间和大小生成一个简单的唯一ID
-            file_id = f"{prefix}-{int(stats.st_mtime)}-{stats.st_size}"
-            self.file_bridge.open_file(file_id, path)
-        except Exception as e:
-            print(f"Error opening {path}: {e}")
-
-if __name__ == "__main__":
-    import argparse
+# Setup Bridge Signals to WebSocket
+def broadcast_signal(signal_name, *args):
+    """
+    Called from bridge threads/uvicorn threads to broadcast signals via WebSockets.
+    """
+    message = {
+        "signal": signal_name,
+        "args": args
+    }
     
-    # 1. 解析命令行参数 (例如: python main.py ./logs/test.log)
+    if main_loop:
+        try:
+            # Schedule the coroutine on the main event loop from ANY thread
+            asyncio.run_coroutine_threadsafe(manager.broadcast(message), main_loop)
+        except Exception as e:
+            print(f"[Bridge] Signal broadcast failed for {signal_name}: {e}")
+    else:
+        # Pre-broadcast or late broadcast
+        print(f"[Bridge] Global loop not ready for signal: {signal_name}")
+
+# Connect signals
+bridge.fileLoaded.connect(lambda *args: broadcast_signal("fileLoaded", *args))
+bridge.pipelineFinished.connect(lambda *args: broadcast_signal("pipelineFinished", *args))
+bridge.statsFinished.connect(lambda *args: broadcast_signal("statsFinished", *args))
+bridge.operationStarted.connect(lambda *args: broadcast_signal("operationStarted", *args))
+bridge.operationProgress.connect(lambda *args: broadcast_signal("operationProgress", *args))
+bridge.operationError.connect(lambda *args: broadcast_signal("operationError", *args))
+bridge.operationStatusChanged.connect(lambda *args: broadcast_signal("operationStatusChanged", *args))
+bridge.pendingFilesCount.connect(lambda *args: broadcast_signal("pendingFilesCount", *args))
+bridge.frontendReady.connect(lambda *args: broadcast_signal("frontendReady", *args))
+
+# 2. Define API Endpoints (FastAPI)
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            # Ping/Pong or keep-alive if needed
+            data = await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+
+@app.get("/api/platform")
+def get_platform():
+    return sys.platform
+
+@app.post("/api/open_file")
+def open_file(data: dict = Body(...)):
+    return bridge.open_file(data['file_id'], data['file_path'])
+
+@app.post("/api/sync_all")
+def sync_all(data: dict = Body(...)):
+    return bridge.sync_all(data['file_id'], data['layers_json'], data['search_json'] if 'search_json' in data else None)
+
+@app.get("/api/read_processed_lines")
+def read_processed_lines(file_id: str, start_line: int, count: int):
+    # Returns raw string from bridge, FastAPI will wrap it in JSON correctly
+    return json.loads(bridge.read_processed_lines(file_id, start_line, count))
+
+@app.get("/api/get_search_match_index")
+def get_search_match_index(file_id: str, rank: int):
+    return bridge.get_search_match_index(file_id, rank)
+
+@app.get("/api/get_search_matches_range")
+def get_search_matches_range(file_id: str, start_rank: int, count: int):
+    return json.loads(bridge.get_search_matches_range(file_id, start_rank, count))
+
+@app.get("/api/get_layer_registry")
+def get_layer_registry():
+    return json.loads(bridge.get_layer_registry())
+
+@app.post("/api/reload_plugins")
+def reload_plugins():
+    return bridge.reload_plugins()
+
+@app.post("/api/ready")
+def ready():
+    bridge.ready()
+    return True
+
+@app.post("/api/search_ripgrep")
+def search_ripgrep(data: dict = Body(...)):
+    return bridge.search_ripgrep(data['file_id'], data['query'], data.get('regex', False), data.get('case_sensitive', False))
+
+@app.post("/api/close_file")
+def close_file(data: dict = Body(...)):
+    bridge.close_file(data['file_id'])
+    return True
+
+@app.get("/api/select_files")
+def select_files():
+    return json.loads(bridge.select_files())
+
+@app.get("/api/select_folder")
+def select_folder():
+    return bridge.select_folder()
+
+@app.get("/api/list_logs_in_folder")
+def list_logs_in_folder(folder_path: str):
+    return json.loads(bridge.list_logs_in_folder(folder_path))
+
+@app.get("/api/list_directory")
+def list_directory(folder_path: str):
+    return json.loads(bridge.list_directory(folder_path))
+
+@app.post("/api/save_workspace_config")
+def save_workspace_config(data: dict = Body(...)):
+    return bridge.save_workspace_config(data['folder_path'], data['config_json'])
+
+@app.get("/api/load_workspace_config")
+def load_workspace_config(folder_path: str):
+    return bridge.load_workspace_config(folder_path)
+
+# Serve Frontend
+base_dir = os.path.dirname(os.path.abspath(__file__))
+www_dir = os.path.join(base_dir, "www")
+
+if os.path.exists(www_dir):
+    app.mount("/", StaticFiles(directory=www_dir, html=True), name="static")
+
+def run_server(port):
+    uvicorn.run(app, host="127.0.0.1", port=port, log_level="error")
+
+def start_app():
     parser = argparse.ArgumentParser(description='LogLayer - Log file viewer')
     parser.add_argument('paths', nargs='*', help='Files or folders to open')
-    args, qt_args = parser.parse_known_args()
+    parser.add_argument('--port', type=int, default=12345, help='Backend server port')
+    parser.add_argument('--no-ui', action='store_true', help='Start server only, no UI window')
+    args = parser.parse_args()
+
+    port = args.port
     
-    # 2. 初始化 Qt 窗口环境
-    # Qt 需要 sys.argv[0] 或自定义列表作为程序名
-    qt_argv = [sys.argv[0]] + qt_args
-    app = QApplication(qt_argv)
+    # Start server in thread
+    t = threading.Thread(target=run_server, args=(port,), daemon=True)
+    t.start()
     
-    # 3. 设置全局图标和 Windows 专用配置
-    icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icon.png")
-    if os.path.exists(icon_path):
-        app.setWindowIcon(QIcon(icon_path))
-        if sys.platform == "win32":
-            import ctypes
-            # 让 Windows 任务栏正确区分 Python 解释器和我们的应用，显示独立图标
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Antigravity.LogLayer.0.1")
+    # Give server a moment to start
+    time.sleep(1)
+    
+    url = f"http://127.0.0.1:{port}"
+    if not os.path.exists(www_dir):
+        # Development mode (Vite)
+        url = "http://localhost:3000"
+        print(f"Backend running on http://127.0.0.1:{port}")
+        print(f"Opening dev frontend: {url}")
+    else:
+        print(f"Starting LogLayer on {url}")
+
+    # Handle CLI paths
+    def on_ready():
+        if args.paths:
+            pending_files = []
+            for path in args.paths:
+                abs_path = os.path.abspath(path)
+                if os.path.isdir(abs_path):
+                    log_files = get_log_files_recursive(abs_path)
+                    pending_files.extend([f['path'] for f in log_files])
+                elif os.path.isfile(abs_path):
+                    pending_files.append(abs_path)
             
-    # 4. 创建并显示主窗口
-    window = MainWindow()
-    window.setAcceptDrops(True)
-    window.show()
-    
-    # 5. 如果有命令行路径，安排加载
-    if args.paths:
-        window.load_cli_paths(args.paths)
-    
-    # 6. 运行 Qt 事件循环
-    sys.exit(app.exec())
+            if pending_files:
+                bridge.pendingFilesCount.emit(len(pending_files))
+                for full_path in pending_files:
+                    try:
+                        stats = os.stat(full_path)
+                        file_id = f"cli-{int(stats.st_mtime)}-{stats.st_size}"
+                        bridge.open_file(file_id, full_path)
+                    except: pass
+
+    # Subscribe to frontendReady to load CLI paths
+    bridge.frontendReady.connect(on_ready)
+
+    if not args.no_ui:
+        # Create webview window
+        window = webview.create_window('LogLayer', url, width=1200, height=800)
+        # Pass window to bridge for native dialogs
+        bridge.window = window
+        # Start webview
+        webview.start()
+    else:
+        try:
+            while True: time.sleep(1)
+        except KeyboardInterrupt:
+            pass
+
+if __name__ == "__main__":
+    start_app()
