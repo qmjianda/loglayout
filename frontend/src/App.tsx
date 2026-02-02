@@ -105,32 +105,14 @@ const App: React.FC = () => {
     saveStatus
   } = layerManagement;
 
-  // ===== 搜索功能 (Search) =====
-  // 封装了全局搜索和编辑器内搜索的逻辑。
-  const search = useSearch({
-    activeFileId,
-    layers,
-    layersFunctionalHash,
-    lineCount: activeFile?.lineCount || 0,
-    searchMatchCount,
-    setProcessedCache
+  // ===== 搜索状态 (Search State) =====
+  // 集中管理搜索相关的视图状态
+  const [searchQuery, setSearchQuery] = React.useState("");
+  const [searchConfig, setSearchConfig] = React.useState({
+    regex: false,
+    caseSensitive: false,
+    wholeWord: false
   });
-
-  const {
-    searchQuery,
-    setSearchQuery,
-    searchConfig,
-    setSearchConfig,
-    currentMatchRank,
-    setCurrentMatchRank,
-    currentMatchIndex,
-    isSearching,
-    setIsSearching,
-    searchMatchCount: searchMatchCountFromHook,
-    currentMatchNumber,
-    findNextSearchMatch,
-    clearSearch
-  } = search;
 
   // ===== UI 状态控制 (UI State) =====
   // 处理各种面板显隐、滚动定位、进度条、工作区根目录等。
@@ -165,6 +147,32 @@ const App: React.FC = () => {
     handleJumpToLine
   } = uiState;
 
+  // ===== 搜索功能逻辑 (Search Logic Hook) =====
+  const search = useSearch({
+    activeFileId,
+    layers,
+    layersFunctionalHash,
+    lineCount: activeFile?.lineCount || 0,
+    searchMatchCount,
+    setProcessedCache,
+    searchQuery,
+    setSearchQuery,
+    searchConfig,
+    setSearchConfig
+  });
+
+  const {
+    currentMatchRank,
+    setCurrentMatchRank,
+    currentMatchIndex,
+    isSearching,
+    setIsSearching,
+    searchMatchCount: searchMatchCountFromHook,
+    currentMatchNumber,
+    findNextSearchMatch,
+    clearSearch
+  } = search;
+
   const [isLayerProcessing, setIsLayerProcessing] = React.useState(false);
 
   // ===== 工作区持久化 (Workspace Config Persistence) =====
@@ -178,6 +186,21 @@ const App: React.FC = () => {
     activeFilePath: activeFile?.path,
     handleFileActivate
   });
+
+  // 导航到下一个搜索匹配项，并自动滚动到底部/指定行
+  const findNextSearchMatchWithJump = useCallback(async (direction: 'next' | 'prev') => {
+    // [OPTIMIZATION] Nearest neighbor jumping
+    // If we have a highlighted index (user click or previous jump), we find the match nearest to it.
+    const nextIdx = await findNextSearchMatch(direction, highlightedIndex);
+    if (nextIdx !== -1) {
+      handleJumpToLine(nextIdx, activeFile?.lineCount || 0);
+    }
+  }, [findNextSearchMatch, handleJumpToLine, activeFile?.lineCount, highlightedIndex]);
+
+  // 增强版：激活文件，并确保其在后端也处于同步状态
+  const handleFileActivateWithLoad = useCallback((fileId: string) => {
+    handleFileActivate(fileId);
+  }, [handleFileActivate]);
 
   // ===== 桥接层集成 (Bridge Integration) =====
   // 监听来自 Python 后端的信号（文件加载完成、搜索完成、统计完成等）。
@@ -237,6 +260,12 @@ const App: React.FC = () => {
         setOperationStatus(null);
         setIsProcessing(false);
         setIsSearching(false);
+
+        // [BUG FIX 3] Nearest jumping after search finishes
+        // If we are in searching mode and no rank is selected yet, jump to the nearest!
+        if (searchQuery && matchCount > 0 && currentMatchRank === -1) {
+          findNextSearchMatchWithJump('next');
+        }
       }
     },
 
@@ -295,18 +324,7 @@ const App: React.FC = () => {
       layers: f.layers
     })), [files, activeFileId]);
 
-  // 增强版：激活文件，并确保其在后端也处于同步状态
-  const handleFileActivateWithLoad = useCallback((fileId: string) => {
-    handleFileActivate(fileId);
-  }, [handleFileActivate]);
-
-  // 导航到下一个搜索匹配项，并自动滚动到底部/指定行
-  const findNextSearchMatchWithJump = useCallback(async (direction: 'next' | 'prev') => {
-    const nextIdx = await findNextSearchMatch(direction);
-    if (nextIdx !== -1) {
-      handleJumpToLine(nextIdx, activeFile?.lineCount || 0);
-    }
-  }, [findNextSearchMatch, handleJumpToLine, activeFile?.lineCount]);
+  // 导航到下一个搜索匹配项，并自动滚动到底部/指定行已被移动到上方
 
   // 处理文件夹选择，并将其设置为当前工作区根目录
   const handleFolderSelectWithWorkspace = useCallback(async () => {
@@ -527,7 +545,8 @@ const App: React.FC = () => {
                             <LogViewer
                               totalLines={files.find(f => f.id === pane.fileId)?.lineCount || 0}
                               fileId={pane.fileId}
-                              searchQuery={searchQuery}
+                              // [BUG FIX 1] Only show highlights if find widget is visible or in search view
+                              searchQuery={(isFindVisible || activeView === 'search') ? searchQuery : ''}
                               searchConfig={searchConfig}
                               scrollToIndex={activePaneId === pane.id ? scrollToIndex : null}
                               highlightedIndex={activePaneId === pane.id ? highlightedIndex : null}

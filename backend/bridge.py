@@ -142,28 +142,49 @@ class PipelineWorker(CustomThread):
             native_layers = [l for l in self.layers if l.stage == LayerStage.NATIVE]
             logic_layers = [l for l in self.layers if l.stage == LayerStage.LOGIC]
             
-            s_args = None
+            # 1. Independent search match calculation to avoid filtering the view
+            matching_physicals = set()
             if self.search and self.search.get('query'):
-                s_args = []
-                if self.search.get('regex'): s_args.append("-e")
-                else: s_args.append("-F")
-                if not self.search.get('caseSensitive'): s_args.append("-i")
-                s_args.append(self.search['query'])
+                search_cmd = [self.rg_path, "--line-number", "--no-heading", "--no-filename", "--color", "never"]
+                if self.search.get('regex'): search_cmd.append("-e")
+                else: search_cmd.append("-F")
+                if not self.search.get('caseSensitive'): search_cmd.append("-i")
+                if self.search.get('wholeWord'): search_cmd.append("-w")
+                search_cmd.append(self.search['query'])
+                search_cmd.append(self.file_path)
+                
+                try:
+                    sp = subprocess.Popen(search_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=False, creationflags=get_creationflags())
+                    if sp.stdout:
+                        for match_line_bytes in sp.stdout:
+                            if not self._is_running: break
+                            match_line = match_line_bytes.decode('utf-8', errors='replace')
+                            parts = match_line.split(':', 1)
+                            if parts[0].isdigit():
+                                matching_physicals.add(int(parts[0]) - 1)
+                    sp.wait(timeout=5)
+                except Exception as e:
+                    print(f"[Pipeline] Search match calculation error: {e}")
 
+            # 2. Quick Exit: If no filters at all, everything is visible
+            if not native_layers and not logic_layers:
+                visible_indices = None
+                search_matches = array.array('I', sorted(list(matching_physicals))) if matching_physicals else array.array('I')
+                if self._is_running:
+                    self.finished.emit(visible_indices, search_matches)
+                return
+
+            # 3. Build Visibility Pipeline (NOT including global search)
             cmd_chain = []
             
-            # Helper to create rg command
             def build_rg_cmd(args, is_first, is_last_native):
                 cmd = [self.rg_path, "--no-heading", "--no-filename", "--color", "never"]
                 if is_first:
                     cmd.append("--line-number")
                 
-                # OPTIMIZATION: If we have NO logic layers, we only need line numbers to index back into mmap.
-                # If we HAVE logic layers, they need the content to filter.
                 if not logic_layers:
                     cmd.extend(["-o", "^"])
                 elif not is_last_native:
-                    # Intermediate pipes only need line numbers to pass down the match
                     cmd.extend(["-o", "^"])
                 
                 cmd.extend(args)
@@ -173,20 +194,16 @@ class PipelineWorker(CustomThread):
                     cmd.append("-")
                 return cmd
 
-            # Build the chain
-            if not native_layers and not s_args:
-                # Default view (all lines)
+            for i, layer in enumerate(native_layers):
+                rg_args = layer.get_rg_args()
+                if not rg_args: continue
+                is_first = len(cmd_chain) == 0
+                is_last_native = (i == len(native_layers) - 1)
+                cmd_chain.append(build_rg_cmd(rg_args, is_first, is_last_native))
+            
+            if not cmd_chain:
+                # Still need a process to feed the lines if we have logic layers but no native layers
                 cmd_chain.append(build_rg_cmd([""], True, True))
-            else:
-                for i, layer in enumerate(native_layers):
-                    rg_args = layer.get_rg_args()
-                    if not rg_args: continue
-                    is_last_native = (i == len(native_layers) - 1) and (not s_args)
-                    cmd_chain.append(build_rg_cmd(rg_args, i == 0, is_last_native))
-                
-                if s_args:
-                    is_first = len(cmd_chain) == 0
-                    cmd_chain.append(build_rg_cmd(s_args, is_first, True))
 
             self._processes = []
             last_stdout = None
@@ -202,35 +219,37 @@ class PipelineWorker(CustomThread):
             v_idx = 0
             line_count = 0
             
-            for line_bytes in last_stdout:
-                if not self._is_running: break
-                line_str = line_bytes.decode('utf-8', errors='ignore')
-                parts = line_str.split(':', 1)
-                if len(parts) < 2: continue
-                try:
-                    physical_idx = int(parts[0]) - 1
-                    content = parts[1]
-                except ValueError: continue
-                
-                is_visible = True
-                if logic_layers:
-                    for layer in logic_layers:
-                        content = layer.process_line(content)
-                        if not layer.filter_line(content, index=physical_idx):
-                            is_visible = False
-                            break
-                
-                if is_visible:
-                    visible_indices.append(physical_idx)
-                    if self.search and self.search.get('query'):
-                        search_matches.append(v_idx)
-                    v_idx += 1
-                
-                line_count += 1
-                if line_count % 10000 == 0: self.progress.emit(0)
+            if last_stdout:
+                for line_bytes in last_stdout:
+                    if not self._is_running: break
+                    line_str = line_bytes.decode('utf-8', errors='ignore')
+                    parts = line_str.split(':', 1)
+                    if len(parts) < 2: continue
+                    try:
+                        physical_idx = int(parts[0]) - 1
+                        content = parts[1]
+                    except ValueError: continue
+                    
+                    is_visible = True
+                    if logic_layers:
+                        for layer in logic_layers:
+                            content = layer.process_line(content)
+                            if not layer.filter_line(content, index=physical_idx):
+                                is_visible = False
+                                break
+                    
+                    if is_visible:
+                        visible_indices.append(physical_idx)
+                        if physical_idx in matching_physicals:
+                            search_matches.append(v_idx)
+                        v_idx += 1
+                    
+                    line_count += 1
+                    if line_count % 10000 == 0: self.progress.emit(0)
             
             if self._is_running:
                 self.finished.emit(visible_indices, search_matches)
+
         except Exception as e:
             if self._is_running: self.error.emit(str(e))
         finally:
@@ -530,8 +549,41 @@ class FileBridge:
     def get_search_match_index(self, file_id: str, rank: int) -> int:
         if file_id not in self._sessions: return -1
         session = self._sessions[file_id]
-        if session.search_matches is None or rank < 0 or rank >= len(session.search_matches): return -1
+        if session.search_matches is None or len(session.search_matches) == 0: return -1
+        if rank < 0 or rank >= len(session.search_matches): return -1
         return session.search_matches[rank]
+
+    def get_nearest_search_rank(self, file_id: str, current_index: int, direction: str) -> int:
+        """Find the rank of the nearest search match based on the current visible index."""
+        if file_id not in self._sessions: return -1
+        session = self._sessions[file_id]
+        matches = session.search_matches
+        if matches is None or len(matches) == 0: return -1
+        
+        import bisect
+        # search_matches contains indices in the visible list
+        rank = bisect.bisect_right(matches, current_index)
+        
+        if direction == 'next':
+            # rank is the index of the first element > current_index
+            if rank < len(matches):
+                return rank
+            else:
+                return 0 # Loop to start
+        else: # prev
+            # rank is the index of the first element > current_index
+            # so rank-1 is the first element <= current_index
+            target_rank = rank - 1
+            if target_rank >= 0:
+                if matches[target_rank] == current_index:
+                    target_rank -= 1
+                
+                if target_rank >= 0:
+                    return target_rank
+                else:
+                    return len(matches) - 1 # Loop to end
+            else:
+                return len(matches) - 1 # Loop to end
 
     def get_search_matches_range(self, file_id: str, start_rank: int, count: int) -> str:
         if file_id not in self._sessions: return "[]"

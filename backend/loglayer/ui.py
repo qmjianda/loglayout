@@ -59,11 +59,18 @@ class Component:
         # 自动将 config 中的值绑定到实例属性上，方便在 process_line 中使用 self.xxx 访问
         for inp in self.inputs:
             if isinstance(inp, SearchInput):
-                # SearchInput 是个复合项，映射到多个属性
+                # Bind the main query value
                 setattr(self, inp.name, self.config.get(inp.name, inp.value))
-                setattr(self, "regex", self.config.get("regex", inp.kwargs.get("regex")))
-                setattr(self, "caseSensitive", self.config.get("caseSensitive", inp.kwargs.get("caseSensitive")))
-                setattr(self, "wholeWord", self.config.get("wholeWord", inp.kwargs.get("wholeWord")))
+                # Bind specific flags with a prefix to avoid collisions if multiple search inputs exist
+                # and to prevent partial config from overwriting established values with defaults.
+                setattr(self, f"{inp.name}_regex", self.config.get("regex", inp.kwargs.get("regex")))
+                setattr(self, f"{inp.name}_caseSensitive", self.config.get("caseSensitive", inp.kwargs.get("caseSensitive")))
+                setattr(self, f"{inp.name}_wholeWord", self.config.get("wholeWord", inp.kwargs.get("wholeWord")))
+                
+                # Maintain legacy names for single-search components (backward compatibility)
+                if not hasattr(self, "regex"): setattr(self, "regex", getattr(self, f"{inp.name}_regex"))
+                if not hasattr(self, "caseSensitive"): setattr(self, "caseSensitive", getattr(self, f"{inp.name}_caseSensitive"))
+                if not hasattr(self, "wholeWord"): setattr(self, "wholeWord", getattr(self, f"{inp.name}_wholeWord"))
             else:
                 setattr(self, inp.name, self.config.get(inp.name, inp.value))
 

@@ -21,15 +21,14 @@ export interface UseSearchProps {
     lineCount: number;
     searchMatchCount: number;
     setProcessedCache: React.Dispatch<React.SetStateAction<Record<string, any>>>;
-}
-
-export interface UseSearchReturn {
-    // Search state
+    // State managed by parent
     searchQuery: string;
     setSearchQuery: (query: string) => void;
     searchConfig: SearchConfig;
     setSearchConfig: React.Dispatch<React.SetStateAction<SearchConfig>>;
+}
 
+export interface UseSearchReturn {
     // Match state
     currentMatchRank: number;
     setCurrentMatchRank: (rank: number) => void;
@@ -42,7 +41,7 @@ export interface UseSearchReturn {
     currentMatchNumber: number;
 
     // Operations
-    findNextSearchMatch: (direction: 'next' | 'prev') => Promise<number>;
+    findNextSearchMatch: (direction: 'next' | 'prev', fromIndex?: number | null) => Promise<number>;
     clearSearch: () => void;
 }
 
@@ -52,14 +51,12 @@ export function useSearch({
     layersFunctionalHash,
     lineCount,
     searchMatchCount,
-    setProcessedCache
+    setProcessedCache,
+    searchQuery,
+    setSearchQuery,
+    searchConfig,
+    setSearchConfig
 }: UseSearchProps): UseSearchReturn {
-    const [searchQuery, setSearchQuery] = useState('');
-    const [searchConfig, setSearchConfig] = useState<SearchConfig>({
-        regex: false,
-        caseSensitive: false,
-        wholeWord: false
-    });
     const [currentMatchRank, setCurrentMatchRank] = useState(-1);
     const [currentMatchIndex, setCurrentMatchIndex] = useState(-1);
     const [isSearching, setIsSearching] = useState(false);
@@ -109,19 +106,29 @@ export function useSearch({
     }, [currentMatchRank, searchQuery]);
 
     // Find next/prev match
-    const findNextSearchMatch = useCallback(async (direction: 'next' | 'prev'): Promise<number> => {
+    const findNextSearchMatch = useCallback(async (direction: 'next' | 'prev', fromIndex?: number | null): Promise<number> => {
         if (!searchQuery || searchMatchCount === 0 || !activeFileId) return -1;
 
+        const { getSearchMatchIndex, getNearestSearchRank } = await import('../bridge_client');
+
         let nextRank = -1;
-        if (direction === 'next') {
-            nextRank = (currentMatchRank + 1) % searchMatchCount;
+
+        // Logic: If fromIndex is provided (e.g., current highlighted/cursor line), 
+        // we find the nearest match from there. Otherwise we use currentMatchRank.
+        const effectiveCurrentIndex = fromIndex !== undefined && fromIndex !== null ? fromIndex : -1;
+
+        if (effectiveCurrentIndex !== -1) {
+            nextRank = await getNearestSearchRank(activeFileId, effectiveCurrentIndex, direction);
         } else {
-            nextRank = (currentMatchRank - 1 + searchMatchCount) % searchMatchCount;
+            if (direction === 'next') {
+                nextRank = (currentMatchRank + 1) % searchMatchCount;
+            } else {
+                nextRank = (currentMatchRank - 1 + searchMatchCount) % searchMatchCount;
+            }
         }
 
         if (nextRank !== -1) {
             setCurrentMatchRank(nextRank);
-            const { getSearchMatchIndex } = await import('../bridge_client');
             const index = await getSearchMatchIndex(activeFileId, nextRank);
             setCurrentMatchIndex(index);
             return index;
@@ -139,10 +146,6 @@ export function useSearch({
     }, []);
 
     return {
-        searchQuery,
-        setSearchQuery,
-        searchConfig,
-        setSearchConfig,
         currentMatchRank,
         setCurrentMatchRank,
         currentMatchIndex,

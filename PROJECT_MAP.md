@@ -40,7 +40,21 @@ graph TD
 - **Virtualization Sync**: `LogViewer` viewport depends on `read_processed_lines` REST endpoint.
 - **Layer Sync**: Frontend calls `sync_all` REST endpoint on layer config change.
 
-## 5. Change Log (2026-02-02) 
+## 5. Change Log (2026-02-03)
+- **Bug Fix**: Repaired Search-induced "Empty View" issue. 
+    - Decoupled Global Search from the `PipelineWorker` visibility chain.
+    - Search now behaves as a non-destructive highlight by default.
+    - Independent search match calculation ensures high performance for large files.
+- **Search Optimization**: Implemented "Nearest Next" navigation logic.
+    - Search navigation now jumps to the match closest to the current cursor/selected line.
+    - Added `get_nearest_search_rank` backend API using binary search (bisect) for O(log N) efficiency.
+- **UI/UX Stability**:
+    - Fixed search highlight lingering after closing find widget.
+    - Resolved input flickering by centralizing search state in `App.tsx`.
+    - Added "Auto-jump to nearest" behavior immediately after a new search is performed.
+    - Fixed Windows encoding issue in search match calculation using `errors='replace'`.
+
+## 6. Change Log (2026-02-02) 
 - **Architecture Refactor**: Migrated from PyQt to FastAPI + pywebview.
 - **Project Structure Reorganization**: 
     - Consolidated all `.log` files into `tests/logs/`.

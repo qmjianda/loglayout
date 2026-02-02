@@ -106,6 +106,9 @@ class WebBridge implements FileBridgeAPI {
     async get_search_match_index(fileId: string, rank: number) {
         return this.get('get_search_match_index', { file_id: fileId, rank });
     }
+    async get_nearest_search_rank(fileId: string, currentIndex: number, direction: string) {
+        return this.get('get_nearest_search_rank', { file_id: fileId, current_index: currentIndex, direction });
+    }
     async get_search_matches_range(fileId: string, start: number, count: number) {
         const res = await this.get('get_search_matches_range', { file_id: fileId, start_rank: start, count: count });
         return JSON.stringify(res);
@@ -156,6 +159,11 @@ export async function searchRipgrep(fileId: string, query: string, regex: boolea
 export async function getSearchMatchIndex(fileId: string, rank: number): Promise<number> {
     if (!fileBridge) return -1;
     return await fileBridge.get_search_match_index(fileId, rank);
+}
+
+export async function getNearestSearchRank(fileId: string, currentIndex: number, direction: 'next' | 'prev'): Promise<number> {
+    if (!fileBridge) return -1;
+    return await fileBridge.get_nearest_search_rank(fileId, currentIndex, direction);
 }
 
 export async function getLayerRegistry(): Promise<string> {

@@ -101,6 +101,7 @@ export interface FileBridgeAPI {
   // Search operations
   search_ripgrep(fileId: string, query: string, regex: boolean, caseSensitive: boolean): Promise<boolean>;
   get_search_match_index(fileId: string, rank: number): Promise<number>;
+  get_nearest_search_rank(fileId: string, currentIndex: number, direction: string): Promise<number>;
   get_search_matches_range(fileId: string, startRank: number, count: number): Promise<string>;
 
   // Registry operations
