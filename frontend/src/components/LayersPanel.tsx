@@ -59,7 +59,8 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
 
   const handleDragOver = (e: React.DragEvent, id: string, type: LayerType) => {
     e.preventDefault(); // IMPORTANT: Required to allow drop
-    e.dataTransfer.dropEffect = 'move'; // Show 'move' cursor instead of forbidden
+    e.stopPropagation(); // STOP BUBBLING to prevent the parent from resetting state
+    e.dataTransfer.dropEffect = 'move';
 
     const draggedId = (window as any).__draggedLayerId || draggedLayerId;
     if (draggedId === id) return;
@@ -310,8 +311,8 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
       onDragOver={(e) => {
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
-        // Only target root if we're not over a specific card (propagation not stopped)
-        if (dragOverId === null || dragOverId === 'root') {
+        // Only target root if we're not over a specific card
+        if (dragOverId === null) {
           setDragOverId('root');
           setDropPosition('after');
         }
