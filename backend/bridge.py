@@ -13,6 +13,12 @@ from pathlib import Path
 import importlib
 from concurrent.futures import ThreadPoolExecutor
 
+try:
+    import tkinter as tk
+    from tkinter import filedialog
+except ImportError:
+    tk = None
+
 from loglayer.registry import LayerRegistry
 from loglayer.core import LayerStage
 
@@ -664,6 +670,19 @@ class FileBridge:
                 print(f"[Bridge] select_files error: {e}")
                 paths = self.window.create_file_dialog(0, allow_multiple=True, file_types=("Log files (*.log;*.txt;*.json)", "All files (*.*)"))
             return json.dumps(paths if paths else [])
+        
+        # Fallback to tkinter for browser-only mode
+        if tk:
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            paths = filedialog.askopenfilenames(
+                title="选择日志文件",
+                filetypes=[("Log files", "*.log *.txt *.json"), ("All files", "*.*")]
+            )
+            root.destroy()
+            return json.dumps(list(paths) if paths else [])
+            
         return "[]"
 
     def select_folder(self) -> str:
@@ -675,6 +694,16 @@ class FileBridge:
                 print(f"[Bridge] select_folder error: {e}")
                 path = self.window.create_file_dialog(1) # 1 is FOLDER
             return path[0] if path else ""
+            
+        # Fallback to tkinter for browser-only mode
+        if tk:
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            path = filedialog.askdirectory(title="选择项目文件夹")
+            root.destroy()
+            return path if path else ""
+            
         return ""
 
     def list_logs_in_folder(self, folder_path: str) -> str:

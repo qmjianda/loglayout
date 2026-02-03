@@ -33,7 +33,7 @@ graph TD
 - [x] **Fast Search**: Native `ripgrep` integration.
 - [x] **Native Interop**: Drag & drop (via browser), native file dialogs (via bridge).
 - [x] **Layer Pipeline (Backend)**: Python-side filtering and highlighting via `sync_layers`.
-- [x] **Browser Compatible**: Architecture ready for web-based deployment.
+- [x] **Browser Compatible**: Native dialog fallbacks (tkinter) for standalone browser mode.
 
 ## 4. Coupling Notes
 - **Communication Contract**: `main.py` WebSocket messages must match `WebBridge` signal emitters in `bridge_client.ts`.
@@ -52,7 +52,10 @@ graph TD
     - Fixed search highlight lingering after closing find widget.
     - Resolved input flickering by centralizing search state in `App.tsx`.
     - Added "Auto-jump to nearest" behavior immediately after a new search is performed.
-    - Fixed Windows encoding issue in search match calculation using `errors='replace'`.
+    - **Browser Mode Fix**:
+    - Implemented `tkinter` fallback for file/folder dialogs when running with `--no-ui`.
+    - Resolved port 3000 collision issues and clarified dev server requirement.
+    - Cleaned up obsolete `qtwebchannel.js` from `index.html`.
 
 ## 6. Change Log (2026-02-02) 
 - **Architecture Refactor**: Migrated from PyQt to FastAPI + pywebview.

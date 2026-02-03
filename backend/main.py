@@ -194,7 +194,7 @@ if os.path.exists(www_dir):
     app.mount("/", StaticFiles(directory=www_dir, html=True), name="static")
 
 def run_server(port):
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="error")
+    uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")
 
 def start_app():
     parser = argparse.ArgumentParser(description='LogLayer - Log file viewer')
