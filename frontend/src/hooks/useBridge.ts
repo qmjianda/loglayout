@@ -44,6 +44,7 @@ export interface BridgeCallbacks {
     onOperationProgress?: (fileId: string, op: string, progress: number) => void;
     onOperationError?: (fileId: string, op: string, message: string) => void;
     onPendingFilesCount?: (count: number) => void;
+    onWorkspaceOpened?: (path: string) => void;
 }
 
 export interface UseBridgeReturn {
@@ -119,6 +120,11 @@ export function useBridge(callbacks: BridgeCallbacks): UseBridgeReturn {
             // pendingFilesCount signal (CLI files)
             api.pendingFilesCount?.connect?.((count: number) => {
                 callbacksRef.current.onPendingFilesCount?.(count);
+            });
+
+            // workspaceOpened signal
+            api.workspaceOpened?.connect?.((path: string) => {
+                callbacksRef.current.onWorkspaceOpened?.(path);
             });
 
             // Notify backend that frontend is ready

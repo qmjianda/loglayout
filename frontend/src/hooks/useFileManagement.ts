@@ -7,7 +7,7 @@
 
 import React, { useState, useCallback, useMemo, useRef } from 'react';
 import { LogLayer, LayerType } from '../types';
-import { openFile, selectFiles, selectFolder, listLogsInFolder } from '../bridge_client';
+import { openFile, closeFile, selectFiles, selectFolder, listLogsInFolder } from '../bridge_client';
 
 // File data interface - exported for use in other modules
 export interface FileData {
@@ -60,6 +60,8 @@ export interface UseFileManagementReturn {
 
     // Loading state
     loadingFileIds: Set<string>;
+    indexingFileIds: Set<string>;
+    setIndexingFileIds: React.Dispatch<React.SetStateAction<Set<string>>>;
     pendingCliFiles: number;
     setPendingCliFiles: React.Dispatch<React.SetStateAction<number>>;
 
@@ -102,6 +104,7 @@ export function useFileManagement(): UseFileManagementReturn {
 
     // Loading state
     const [loadingFileIds, setLoadingFileIds] = useState<Set<string>>(new Set());
+    const [indexingFileIds, setIndexingFileIds] = useState<Set<string>>(new Set());
     const [pendingCliFiles, setPendingCliFiles] = useState<number>(0);
 
     // Processed cache per file
@@ -151,6 +154,23 @@ export function useFileManagement(): UseFileManagementReturn {
 
     // Remove file
     const handleFileRemove = useCallback((fileId: string) => {
+        // 1. Notify backend to close file and release resources
+        closeFile(fileId).catch(err => console.error(`[useFileManagement] Error closing file ${fileId}:`, err));
+
+        // 2. Clean up local metadata
+        setProcessedCache(prev => {
+            const next = { ...prev };
+            delete next[fileId];
+            return next;
+        });
+
+        setLoadingFileIds(prev => {
+            const next = new Set(prev);
+            next.delete(fileId);
+            return next;
+        });
+
+        // 3. Update file list and active pane
         setFiles(prev => {
             const next = prev.filter(f => f.id !== fileId);
             if (activeFileId === fileId) {
@@ -279,6 +299,8 @@ export function useFileManagement(): UseFileManagementReturn {
         activePaneId,
         setActivePaneId,
         loadingFileIds,
+        indexingFileIds,
+        setIndexingFileIds,
         pendingCliFiles,
         setPendingCliFiles,
         processedCache,

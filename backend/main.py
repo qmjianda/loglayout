@@ -99,6 +99,7 @@ bridge.operationError.connect(lambda *args: broadcast_signal("operationError", *
 bridge.operationStatusChanged.connect(lambda *args: broadcast_signal("operationStatusChanged", *args))
 bridge.pendingFilesCount.connect(lambda *args: broadcast_signal("pendingFilesCount", *args))
 bridge.frontendReady.connect(lambda *args: broadcast_signal("frontendReady", *args))
+bridge.workspaceOpened.connect(lambda *args: broadcast_signal("workspaceOpened", *args))
 
 # 2. Define API Endpoints (FastAPI)
 @app.websocket("/ws")
@@ -223,24 +224,21 @@ def start_app():
 
     # Handle CLI paths
     def on_ready():
-        if args.paths:
-            pending_files = []
-            for path in args.paths:
-                abs_path = os.path.abspath(path)
-                if os.path.isdir(abs_path):
-                    log_files = get_log_files_recursive(abs_path)
-                    pending_files.extend([f['path'] for f in log_files])
-                elif os.path.isfile(abs_path):
-                    pending_files.append(abs_path)
+        if args.paths and len(args.paths) > 0:
+            path = args.paths[0]
+            abs_path = os.path.abspath(path)
             
-            if pending_files:
-                bridge.pendingFilesCount.emit(len(pending_files))
-                for full_path in pending_files:
-                    try:
-                        stats = os.stat(full_path)
-                        file_id = f"cli-{int(stats.st_mtime)}-{stats.st_size}"
-                        bridge.open_file(file_id, full_path)
-                    except: pass
+            if os.path.isdir(abs_path):
+                # Only set workspace, don't open all files (as requested)
+                bridge.workspaceOpened.emit(abs_path)
+            elif os.path.isfile(abs_path):
+                # Just open the single file
+                try:
+                    stats = os.stat(abs_path)
+                    file_id = f"cli-{int(stats.st_mtime)}-{stats.st_size}-{hash(abs_path)}"
+                    bridge.open_file(file_id, abs_path)
+                except Exception as e:
+                    print(f"[Main] CLI open_file error: {e}")
 
     # Subscribe to frontendReady to load CLI paths
     bridge.frontendReady.connect(on_ready)

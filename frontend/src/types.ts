@@ -117,6 +117,7 @@ export interface FileBridgeAPI {
   operationError: { connect: (cb: (fileId: string, opName: string, msg: string) => void) => void };
   operationStatusChanged: { connect: (cb: (fileId: string, status: string, p: number) => void) => void };
   pendingFilesCount: { connect: (cb: (count: number) => void) => void };
+  workspaceOpened: { connect: (cb: (path: string) => void) => void };
   frontendReady: { connect: (cb: () => void) => void };
 }
 

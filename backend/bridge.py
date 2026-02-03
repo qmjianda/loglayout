@@ -101,12 +101,11 @@ class CustomThread:
     def run(self): raise NotImplementedError()
 
 class IndexingWorker(CustomThread):
-    finished = Signal(object)
-    progress = Signal(float)
-    error = Signal(str)
-
     def __init__(self, mmap_obj, size):
         super().__init__()
+        self.finished = Signal(object)
+        self.progress = Signal(float)
+        self.error = Signal(str)
         self.mmap = mmap_obj
         self.size = size
         self._is_running = True
@@ -130,12 +129,11 @@ class IndexingWorker(CustomThread):
             self.error.emit(str(e))
 
 class PipelineWorker(CustomThread):
-    finished = Signal(object, object)
-    progress = Signal(float)
-    error = Signal(str)
-
     def __init__(self, rg_path, file_path, layers, search_config=None):
         super().__init__()
+        self.finished = Signal(object, object)
+        self.progress = Signal(float)
+        self.error = Signal(str)
         self.rg_path = rg_path
         self.file_path = file_path
         self.layers = layers
@@ -188,10 +186,7 @@ class PipelineWorker(CustomThread):
                 if is_first:
                     cmd.append("--line-number")
                 
-                if not logic_layers:
-                    cmd.extend(["-o", "^"])
-                elif not is_last_native:
-                    cmd.extend(["-o", "^"])
+
                 
                 cmd.extend(args)
                 if is_first:
@@ -271,11 +266,10 @@ class PipelineWorker(CustomThread):
                 except: pass
 
 class StatsWorker(CustomThread):
-    finished = Signal(str)
-    error = Signal(str)
-
     def __init__(self, rg_path, layers, file_path, total_lines):
         super().__init__()
+        self.finished = Signal(str)
+        self.error = Signal(str)
         self.rg_path = rg_path
         self.layers = layers
         self.file_path = file_path
@@ -417,6 +411,7 @@ class FileBridge:
     operationStatusChanged = Signal(str, str, int)
     pendingFilesCount = Signal(int)
     frontendReady = Signal()
+    workspaceOpened = Signal(str)
     
     def __init__(self):
         self._sessions = {}
@@ -619,7 +614,8 @@ class FileBridge:
                     end_off = offsets[real_idx + 1] if real_idx + 1 < len(offsets) else session.size
                     chunk = session.mmap[start_off:end_off]
                     if len(chunk) > 10000: chunk = chunk[:10000] + b"... [truncated]"
-                    content = chunk.decode('utf-8', errors='replace').rstrip('\r\n')
+                    # Ensure content is a single line and no internal nulls or breaks
+                    content = chunk.decode('utf-8', errors='replace').replace('\r', '').replace('\n', ' ')
                     highlights = []
                     logic_layers = [l for l in session.layer_instances if l.stage == LayerStage.LOGIC]
                     for layer in logic_layers: content = layer.process_line(content)

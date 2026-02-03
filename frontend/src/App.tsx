@@ -47,6 +47,8 @@ const App: React.FC = () => {
     activePaneId,
     setActivePaneId,
     loadingFileIds,
+    indexingFileIds,
+    setIndexingFileIds,
     pendingCliFiles,
     setPendingCliFiles,
     processedCache,
@@ -207,10 +209,19 @@ const App: React.FC = () => {
   const { bridgeApi, activeFileIdRef, setActiveFileId: setBridgeActiveFileId } = useBridge({
     // 当后端成功解析并建立文件索引后触发
     onFileLoaded: (fileId: string, info: FileLoadedInfo) => {
-      setBridgedCount(fileId, info.lineCount);
-
+      // [BUG FIX] Sanitization: Check if the file is still supposed to be open
       setFiles(prev => {
         const existingIndex = prev.findIndex(f => f.id === fileId);
+
+        // If the file was removed from the list before this signal arrived, ignore it.
+        // Special case: CLI files might not be in the list yet.
+        if (existingIndex === -1 && !fileId.startsWith('cli-')) {
+          console.log(`[App] Ignoring onFileLoaded for closed file: ${fileId}`);
+          return prev;
+        }
+
+        setBridgedCount(fileId, info.lineCount);
+
         if (existingIndex >= 0) {
           const newFiles = [...prev];
           const oldFile = prev[existingIndex];
@@ -223,6 +234,7 @@ const App: React.FC = () => {
           };
           return newFiles;
         } else {
+          // This handles CLI files or auto-restored files that aren't in the list yet
           const newFile = {
             id: fileId,
             name: info.name,
@@ -234,7 +246,6 @@ const App: React.FC = () => {
             path: info.path || info.name,
             history: { past: [], future: [] }
           };
-          // 自动激活新加载的文件
           setTimeout(() => setActiveFileId(fileId), 0);
           return [...prev, newFile];
         }
@@ -244,6 +255,11 @@ const App: React.FC = () => {
       setIsProcessing(false);
       setOperationStatus(null);
       markFileLoaded(fileId);
+      setIndexingFileIds(prev => {
+        const next = new Set(prev);
+        next.delete(fileId);
+        return next;
+      });
     },
 
     // 当后端 Pipeline 运行结束（过滤/搜索合并）后触发
@@ -260,6 +276,11 @@ const App: React.FC = () => {
         setOperationStatus(null);
         setIsProcessing(false);
         setIsSearching(false);
+        setIndexingFileIds(prev => {
+          const next = new Set(prev);
+          next.delete(fileId);
+          return next;
+        });
 
         // [BUG FIX 3] Nearest jumping after search finishes
         // If we are in searching mode and no rank is selected yet, jump to the nearest!
@@ -279,6 +300,10 @@ const App: React.FC = () => {
 
     // 监听各种后台任务的进度（Indexing, Pipeline, Searching 等）
     onOperationStarted: (fileId, op) => {
+      if (op === 'indexing') {
+        setIndexingFileIds(prev => new Set(prev).add(fileId));
+      }
+
       if (activeFileIdRef.current === fileId) {
         setOperationStatus({ op, progress: 0 });
         setLoadingProgress(0);
@@ -299,12 +324,23 @@ const App: React.FC = () => {
         setOperationStatus({ op, progress: 0, error: message });
         setIsProcessing(false);
         setIsSearching(false);
+        setIndexingFileIds(prev => {
+          const next = new Set(prev);
+          next.delete(fileId);
+          return next;
+        });
       }
     },
 
     // 处理从 CLI 启动时排队解析的文件
     onPendingFilesCount: (count) => {
       setPendingCliFiles(count);
+    },
+
+    // 处理从 CLI 启动时传入的文件夹路径
+    onWorkspaceOpened: (path) => {
+      const folderName = path.split(/[/\\]/).pop() || path;
+      setWorkspaceRoot({ path, name: folderName });
     }
   });
 
@@ -534,29 +570,32 @@ const App: React.FC = () => {
                           </div>
                         </div>
 
-                        {/* 文件加载中的骨架屏或 Loading 状态 */}
-                        {(paneFileId && loadingFileIds.has(paneFileId)) || (paneFileId === activeFileId && isProcessing && operationStatus?.op === 'indexing') ? (
-                          <FileLoadingSkeleton fileName={files.find(f => f.id === paneFileId)?.name} />
-                        ) : null}
-
                         {/* 核心组件：Monaco 编辑器封装的日志查看器 */}
                         {paneFileId ? (
                           <div className="flex-1 flex flex-col relative min-h-0 overflow-hidden">
-                            <LogViewer
-                              totalLines={files.find(f => f.id === pane.fileId)?.lineCount || 0}
-                              fileId={pane.fileId}
-                              // [BUG FIX 1] Only show highlights if find widget is visible or in search view
-                              searchQuery={(isFindVisible || activeView === 'search') ? searchQuery : ''}
-                              searchConfig={searchConfig}
-                              scrollToIndex={activePaneId === pane.id ? scrollToIndex : null}
-                              highlightedIndex={activePaneId === pane.id ? highlightedIndex : null}
-                              onLineClick={(idx) => {
-                                if (activePaneId !== pane.id) setActivePaneId(pane.id);
-                                setHighlightedIndex(idx);
-                              }}
-                              onAddLayer={(type, config) => addLayer(type, config)}
-                              updateTrigger={bridgedUpdateTrigger}
-                            />
+                            {/* [BUG FIX] Mutually exclusive rendering and state reset:
+                                1. Use loadingFileIds and indexingFileIds for this SPECIFIC pane's file.
+                                2. Add key={paneFileId} to force remount on file switch. 
+                                   This resets LogViewer internal states like scrolling and cache. */}
+                            {(loadingFileIds.has(paneFileId) || indexingFileIds.has(paneFileId)) ? (
+                              <FileLoadingSkeleton fileName={files.find(f => f.id === paneFileId)?.name} />
+                            ) : (
+                              <LogViewer
+                                key={paneFileId}
+                                totalLines={files.find(f => f.id === pane.fileId)?.lineCount || 0}
+                                fileId={pane.fileId}
+                                searchQuery={(isFindVisible || activeView === 'search') ? searchQuery : ''}
+                                searchConfig={searchConfig}
+                                scrollToIndex={activePaneId === pane.id ? scrollToIndex : null}
+                                highlightedIndex={activePaneId === pane.id ? highlightedIndex : null}
+                                onLineClick={(idx) => {
+                                  if (activePaneId !== pane.id) setActivePaneId(pane.id);
+                                  setHighlightedIndex(idx);
+                                }}
+                                onAddLayer={(type, config) => addLayer(type, config)}
+                                updateTrigger={bridgedUpdateTrigger}
+                              />
+                            )}
                           </div>
                         ) : pendingCliFiles > 0 ? (
                           // CLI 待处理文件占位

@@ -40,7 +40,18 @@ graph TD
 - **Virtualization Sync**: `LogViewer` viewport depends on `read_processed_lines` REST endpoint.
 - **Layer Sync**: Frontend calls `sync_all` REST endpoint on layer config change.
 
-## 5. Change Log (2026-02-03)
+## 5. Change Log (2026-02-04)
+- **Bug Fix**: Resolved "Filter Layer Empty View" issue.
+    - **Root Cause**: An optimization in `PipelineWorker` was injecting `-o ^` (only match start of line) to reduce IPC overhead. This caused `ripgrep` in Fixed String mode (`-F`) to treat `^` as a literal pattern, failing to match anything.
+    - **Fix**: Removed the faulty optimization. `PipelineWorker` now correctly receives full line content from native layers, ensuring compatibility with all regex/fixed-string modes.
+    - **Verification**: Added `tests/reproduce_filter_bug.py`.
+- **CRITICAL BACKEND FIX**: Fixed severe session corruption bug causing file content merging.
+    - **Root Cause**: Custom `Signal` class in `bridge.py` defined signals as class attributes, causing all Worker threads (Indexing, Pipeline, Stats) to share the same signal instances.
+    - **Symptom**: Opening File 2 triggers File 2's indexing finished signal, which due to sharing, executes File 1's callback, overwriting File 1's `line_offsets` with File 2's offsets.
+    - **Fix**: Moved Signal instantiation to `__init__` in all Worker classes (`IndexingWorker`, `PipelineWorker`, `StatsWorker`) to ensure instance isolation.
+- **Frontend Tweak**: Added `whitespace-pre` and `min-w-0` to `LogViewer` CSS to ensure robust text display preventing unwanted wrapping.
+
+## 6. Change Log (2026-02-03)
 - **Bug Fix**: Repaired Search-induced "Empty View" issue. 
     - Decoupled Global Search from the `PipelineWorker` visibility chain.
     - Search now behaves as a non-destructive highlight by default.

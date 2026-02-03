@@ -93,12 +93,15 @@ export const LogViewer: React.FC<LogViewerProps> = ({
 
     lastFetchRef.current = { start: fetchStart, end: fetchEnd };
 
+    let ignore = false;
     const timer = setTimeout(async () => {
       try {
         const count = fetchEnd - fetchStart;
-        if (count <= 0) return;
+        if (count <= 0 || ignore) return;
+
         // batch 读取：一次性拉取整个可见窗口的内容
         const lines = await readProcessedLines(fileId, fetchStart, count);
+        if (ignore) return;
 
         setBridgedLines(prev => {
           const next = new Map(prev);
@@ -116,11 +119,14 @@ export const LogViewer: React.FC<LogViewerProps> = ({
           return next;
         });
       } catch (e) {
-        console.error('Failed to fetch lines:', e);
+        if (!ignore) console.error('Failed to fetch lines:', e);
       }
     }, 10); // 微调延时，防止高频滚动导致请求堆积
 
-    return () => clearTimeout(timer);
+    return () => {
+      ignore = true;
+      clearTimeout(timer);
+    };
   }, [startIndex, endIndex, fileId, totalLines, updateTrigger]);
 
   // 从本地缓存获取一行内容
@@ -285,9 +291,10 @@ export const LogViewer: React.FC<LogViewerProps> = ({
               <div
                 key={`${originalIndex}-${idx}`}
                 onClick={() => onLineClick?.(absoluteIdx)}
-                className={`flex group hover:bg-[#2a2d2e] px-4 h-[20px] items-center whitespace-pre border-l-2 transition-colors cursor-default
+                className={`flex group hover:bg-[#2a2d2e] px-4 h-[20px] items-center whitespace-pre border-l-2 transition-colors cursor-default overflow-hidden
                   ${isMarked ? 'border-yellow-500' : 'border-transparent'}
                   ${isHighlighted ? 'bg-blue-500/20' : ''}`}
+                style={{ height: '20px', minHeight: '20px', maxHeight: '20px' }}
               >
                 {/* 行号栏：显示虚拟行号和物理行号 (#) */}
                 <div className={`w-20 text-right pr-4 shrink-0 select-none text-[10px] flex flex-col justify-center items-end leading-[9px] ${isHighlighted ? 'text-blue-400 font-semibold' : 'text-gray-600'}`}>
@@ -296,7 +303,7 @@ export const LogViewer: React.FC<LogViewerProps> = ({
                     #{(originalIndex + 1).toLocaleString()}
                   </span>
                 </div>
-                <div className="flex-1 text-[#d4d4d4]">{renderLineContent(line)}</div>
+                <div className="flex-1 text-[#d4d4d4] overflow-hidden whitespace-pre min-w-0">{renderLineContent(line)}</div>
               </div>
             );
           })}

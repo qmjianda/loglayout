@@ -41,6 +41,7 @@ class WebBridge implements FileBridgeAPI {
     operationError = new Signal();
     operationStatusChanged = new Signal();
     pendingFilesCount = new Signal();
+    workspaceOpened = new Signal();
     frontendReady = new Signal();
 
     private ws: WebSocket | null = null;
