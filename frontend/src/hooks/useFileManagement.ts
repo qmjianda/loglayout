@@ -8,6 +8,7 @@
 import React, { useState, useCallback, useMemo, useRef } from 'react';
 import { LogLayer, LayerType } from '../types';
 import { openFile, closeFile, selectFiles, selectFolder, listLogsInFolder } from '../bridge_client';
+import { basename, removeFromSet, addToSet } from '../utils';
 
 // File data interface - exported for use in other modules
 export interface FileData {
@@ -164,11 +165,7 @@ export function useFileManagement(): UseFileManagementReturn {
             return next;
         });
 
-        setLoadingFileIds(prev => {
-            const next = new Set(prev);
-            next.delete(fileId);
-            return next;
-        });
+        setLoadingFileIds(prev => removeFromSet(prev, fileId));
 
         // 3. Update file list and active pane
         setFiles(prev => {
@@ -227,7 +224,7 @@ export function useFileManagement(): UseFileManagementReturn {
             if (!paths || paths.length === 0) return;
 
             const validFiles = paths.map(path => ({
-                name: path.split(/[/\\]/).pop() || path,
+                name: basename(path),
                 path: path
             }));
 
@@ -244,7 +241,7 @@ export function useFileManagement(): UseFileManagementReturn {
             const folderPath = await selectFolder();
             if (!folderPath) return null;
 
-            const folderName = folderPath.split(/[/\\]/).pop() || folderPath;
+            const folderName = basename(folderPath);
             return { path: folderPath, name: folderName };
         } catch (e) {
             console.error('[useFileManagement] Native folder select error:', e);
@@ -283,11 +280,7 @@ export function useFileManagement(): UseFileManagementReturn {
 
     // Mark file as loaded (called from bridge callbacks)
     const markFileLoaded = useCallback((fileId: string) => {
-        setLoadingFileIds(prev => {
-            const next = new Set(prev);
-            next.delete(fileId);
-            return next;
-        });
+        setLoadingFileIds(prev => removeFromSet(prev, fileId));
     }, []);
 
     return {

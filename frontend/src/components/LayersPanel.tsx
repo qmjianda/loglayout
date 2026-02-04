@@ -108,6 +108,8 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
       transform: <svg className="w-3.5 h-3.5 text-orange-400" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M4 4h16v16H4V4zm4 4h8v8H8V8z" /></svg>,
       folder: <svg className="w-4 h-4 text-gray-400" fill="currentColor" viewBox="0 0 20 20"><path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" /></svg>,
       level: <svg className="w-3.5 h-3.5 text-red-400" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>,
+      rowtint: <svg className="w-3.5 h-3.5 text-pink-400" fill="currentColor" viewBox="0 0 24 24"><path d="M4 5h16v3H4V5zm0 5h16v3H4v-3zm0 5h16v3H4v-3z" /></svg>,
+      bookmark: <svg className="w-3.5 h-3.5 text-amber-400" fill="currentColor" viewBox="0 0 24 24"><path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z" /></svg>,
       default: <svg className="w-3.5 h-3.5 text-gray-500" fill="currentColor" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
     };
 
@@ -305,13 +307,26 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
       ));
   };
 
+  // === NEW: Categorize layers by category from registry ===
+  const RENDERING_TYPES = ['HIGHLIGHT', 'ROWTINT', 'BOOKMARK'];
+
+  const processingLayers = layers.filter(l => !RENDERING_TYPES.includes(l.type) && l.groupId === undefined);
+  const renderingLayers = layers.filter(l => RENDERING_TYPES.includes(l.type) && l.groupId === undefined);
+
+  const ZoneHeader: React.FC<{ title: string; icon: React.ReactNode; count: number }> = ({ title, icon, count }) => (
+    <div className="flex items-center gap-2 px-3 py-2 bg-[#1e1e1e] border-b border-[#333] text-[10px] uppercase tracking-wide text-gray-500 font-semibold select-none">
+      {icon}
+      <span>{title}</span>
+      <span className="ml-auto text-[9px] bg-black/40 px-1.5 py-0.5 rounded text-gray-600 font-mono">{count}</span>
+    </div>
+  );
+
   return (
     <div
       className="flex flex-col select-none"
       onDragOver={(e) => {
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
-        // Only target root if we're not over a specific card
         if (dragOverId === null) {
           setDragOverId('root');
           setDropPosition('after');
@@ -327,7 +342,39 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
         setDropPosition(null);
       }}
     >
-      {renderRecursive()}
+      {/* Processing Zone */}
+      {(processingLayers.length > 0 || layers.length === 0) && (
+        <>
+          <ZoneHeader
+            title="处理层"
+            icon={<svg className="w-3 h-3 text-blue-400" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M3 4h18l-7 9v6l-4 2V13L3 4z" /></svg>}
+            count={processingLayers.length}
+          />
+          {processingLayers.map(layer => (
+            <React.Fragment key={layer.id}>
+              {renderLayerCard(layer, 0)}
+              {layer.type === LayerType.FOLDER && !layer.isCollapsed && renderRecursive(layer.id, 1)}
+            </React.Fragment>
+          ))}
+        </>
+      )}
+
+      {/* Rendering Zone */}
+      {(renderingLayers.length > 0 || layers.length === 0) && (
+        <>
+          <ZoneHeader
+            title="渲染层"
+            icon={<svg className="w-3 h-3 text-yellow-400" fill="currentColor" viewBox="0 0 24 24"><path d="M12 21a9 9 0 110-18 9 9 0 010 18z" /></svg>}
+            count={renderingLayers.length}
+          />
+          {renderingLayers.map(layer => (
+            <React.Fragment key={layer.id}>
+              {renderLayerCard(layer, 0)}
+            </React.Fragment>
+          ))}
+        </>
+      )}
+
       {dragOverId === 'root' && (
         <div className="h-[2px] bg-blue-500 m-4 rounded-full animate-pulse shadow-[0_0_10px_rgba(59,130,246,0.8)]" />
       )}

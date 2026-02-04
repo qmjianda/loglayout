@@ -124,6 +124,14 @@ def open_file(data: dict = Body(...)):
 def sync_all(data: dict = Body(...)):
     return bridge.sync_all(data['file_id'], data['layers_json'], data['search_json'] if 'search_json' in data else None)
 
+@app.post("/api/sync_layers")
+def sync_layers(data: dict = Body(...)):
+    return bridge.sync_layers(data['file_id'], data['layers_json'], data.get('search_json'))
+
+@app.post("/api/sync_decorations")
+def sync_decorations(data: dict = Body(...)):
+    return bridge.sync_decorations(data['file_id'], data['layers_json'])
+
 @app.get("/api/read_processed_lines")
 def read_processed_lines(file_id: str, start_line: int, count: int):
     # Returns raw string from bridge, FastAPI will wrap it in JSON correctly

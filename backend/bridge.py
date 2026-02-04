@@ -20,7 +20,7 @@ except ImportError:
     tk = None
 
 from loglayer.registry import LayerRegistry
-from loglayer.core import LayerStage
+from loglayer.core import LayerStage, LayerCategory
 
 def get_creationflags():
     """Returns subprocess creation flags to hide windows on Windows."""
@@ -254,16 +254,27 @@ class PipelineWorker(CustomThread):
         except Exception as e:
             if self._is_running: self.error.emit(str(e))
         finally:
-            for p in self._processes:
-                try: 
-                    if p.poll() is None: p.terminate()
-                    p.wait(timeout=0.1)
-                except: pass
-            for p in self._processes:
-                try: 
-                    if p.poll() is None: p.terminate()
-                    p.wait(timeout=0.2)
-                except: pass
+            self._cleanup_processes()
+    
+    def _cleanup_processes(self, timeout=0.3):
+        """安全清理所有子进程"""
+        # 第一遍: 发送 terminate 信号
+        for p in self._processes:
+            try:
+                if p.poll() is None:
+                    p.terminate()
+            except:
+                pass
+        # 第二遍: 等待进程退出，超时则强制 kill
+        for p in self._processes:
+            try:
+                p.wait(timeout=timeout)
+            except:
+                try:
+                    p.kill()  # 强制杀死僵尸进程
+                except:
+                    pass
+        self._processes = []
 
 class StatsWorker(CustomThread):
     def __init__(self, rg_path, layers, file_path, total_lines):
@@ -375,7 +386,8 @@ class LogSession:
         self.visible_indices = None
         self.search_matches = None
         self.layers = []
-        self.layer_instances = []
+        self.layer_instances = []      # 处理层实例
+        self.rendering_instances = []  # 渲染层实例
         self.search_config = None 
         self.cache = {}
         self.workers = {}
@@ -417,6 +429,7 @@ class FileBridge:
         self._sessions = {}
         self._rg_path = self._get_rg_path()
         self._zombie_workers = []
+        self._zombie_cleanup_counter = 0  # 清理计数器
         plugin_dir = os.path.join(os.getcwd(), "backend", "plugins")
         self._registry = LayerRegistry(plugin_dir)
         self._registry.discover_plugins()
@@ -435,7 +448,16 @@ class FileBridge:
         if not worker.isRunning(): self._cleanup_zombie(worker)
 
     def _cleanup_zombie(self, worker):
-        if worker in self._zombie_workers: self._zombie_workers.remove(worker)
+        """清理已完成的 zombie worker"""
+        if worker in self._zombie_workers:
+            self._zombie_workers.remove(worker)
+        # 定期清理：每 10 次调用后检查并清理过期的 zombie workers
+        self._zombie_cleanup_counter += 1
+        if self._zombie_cleanup_counter >= 10:
+            self._zombie_cleanup_counter = 0
+            self._zombie_workers = [w for w in self._zombie_workers if w.isRunning()]
+            if len(self._zombie_workers) > 20:
+                print(f"[Warning] {len(self._zombie_workers)} zombie workers still running")
 
     def _get_rg_path(self):
         if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'): base_dir = sys._MEIPASS
@@ -483,25 +505,82 @@ class FileBridge:
         self.fileLoaded.emit(file_id, json.dumps({"name": Path(session.path).name, "size": session.size, "lineCount": len(offsets)}))
 
     def sync_all(self, file_id: str, layers_json: str, search_json: str) -> bool:
+        """Legacy API - delegates to sync_layers for backward compatibility"""
+        return self.sync_layers(file_id, layers_json, search_json)
+
+    def sync_layers(self, file_id: str, layers_json: str, search_json: str) -> bool:
+        """
+        同步处理层配置。
+        触发完整的 PipelineWorker 重新计算可见行。
+        """
         if file_id not in self._sessions: return False
         session = self._sessions[file_id]
         try:
             session.layers = json.loads(layers_json)
             session.search_config = json.loads(search_json) if search_json else None
+            
+            # 分离处理层和渲染层实例
             session.layer_instances = []
+            session.rendering_instances = []
+            
             for l_conf in session.layers:
                 if l_conf.get('enabled'):
                     inst = self._registry.create_layer_instance(l_conf['type'], l_conf['config'])
                     if inst:
                         inst.id = l_conf.get('id')
-                        session.layer_instances.append(inst)
+                        # 根据类别分类
+                        if self._registry.is_rendering_layer(l_conf['type']):
+                            session.rendering_instances.append(inst)
+                        else:
+                            session.layer_instances.append(inst)
+            
+            # 只传递处理层给 Pipeline
             self._start_pipeline(file_id, session.layer_instances)
             return True
         except Exception as e:
-            print(f"Sync all error: {file_id}: {e}")
-            # Safeguard: If sync fails, ensure we reset status
+            print(f"Sync layers error: {file_id}: {e}")
             self.operationError.emit(file_id, "sync", str(e))
             self.operationStatusChanged.emit(file_id, "ready", 100)
+            return False
+
+    def sync_decorations(self, file_id: str, layers_json: str) -> bool:
+        """
+        同步渲染层配置。
+        只刷新渲染缓存，不重新计算可见行。
+        这是一个轻量级操作，用于快速响应高亮/行背景等变更。
+        """
+        if file_id not in self._sessions: return False
+        session = self._sessions[file_id]
+        try:
+            session.layers = json.loads(layers_json)
+            
+            # 只更新渲染层实例
+            session.rendering_instances = []
+            for l_conf in session.layers:
+                if l_conf.get('enabled') and self._registry.is_rendering_layer(l_conf['type']):
+                    inst = self._registry.create_layer_instance(l_conf['type'], l_conf['config'])
+                    if inst:
+                        inst.id = l_conf.get('id')
+                        session.rendering_instances.append(inst)
+            
+            # 清除渲染缓存，强制下次读取时重新应用渲染层
+            session.cache.clear()
+            
+            # 发送刷新信号 (不改变可见行数)
+            indices_len = len(session.visible_indices) if session.visible_indices is not None else len(session.line_offsets)
+            matches_len = len(session.search_matches) if session.search_matches is not None else 0
+            self.pipelineFinished.emit(file_id, indices_len, matches_len)
+            
+            # 更新统计（仅针对有查询的渲染层）
+            if any(hasattr(inst, 'query') and inst.query for inst in session.rendering_instances):
+                stat_worker = StatsWorker(self._rg_path, session.rendering_instances, session.path, len(session.line_offsets))
+                session.workers['stats'] = stat_worker
+                stat_worker.finished.connect(lambda stats: self.statsFinished.emit(file_id, stats))
+                stat_worker.start()
+            
+            return True
+        except Exception as e:
+            print(f"Sync decorations error: {file_id}: {e}")
             return False
 
     def _start_pipeline(self, file_id, layer_instances):
@@ -614,14 +693,25 @@ class FileBridge:
                     end_off = offsets[real_idx + 1] if real_idx + 1 < len(offsets) else session.size
                     chunk = session.mmap[start_off:end_off]
                     if len(chunk) > 10000: chunk = chunk[:10000] + b"... [truncated]"
-                    # Ensure content is a single line and no internal nulls or breaks
                     content = chunk.decode('utf-8', errors='replace').replace('\r', '').replace('\n', ' ')
+                    
+                    # 1. 应用处理层的内容变换
                     highlights = []
+                    row_style = {}
                     logic_layers = [l for l in session.layer_instances if l.stage == LayerStage.LOGIC]
                     for layer in logic_layers: content = layer.process_line(content)
-                    for layer in reversed(session.layer_instances):
+                    
+                    # 2. 应用渲染层的高亮和行样式
+                    rendering_layers = getattr(session, 'rendering_instances', [])
+                    for layer in reversed(rendering_layers):
                         hls = layer.highlight_line(content)
                         if hls: highlights.extend(hls)
+                        # 获取行样式 (如 RowTintLayer)
+                        if hasattr(layer, 'get_row_style'):
+                            style = layer.get_row_style(content, index=real_idx) if 'index' in layer.get_row_style.__code__.co_varnames else layer.get_row_style(content)
+                            if style: row_style.update(style)
+                    
+                    # 3. 应用搜索高亮
                     if session.search_config and session.search_config.get('query'):
                         sc = session.search_config
                         try:
@@ -631,7 +721,10 @@ class FileBridge:
                             for m in search_re.finditer(content):
                                 highlights.append({"start": m.start(), "end": m.end(), "color": "#facc15", "opacity": 100, "isSearch": True})
                         except: pass
+                    
                     line_data = {"index": real_idx, "content": content, "highlights": highlights}
+                    if row_style:
+                        line_data["rowStyle"] = row_style
                     if len(session.cache) < 5000: session.cache[i] = line_data
                     results.append(line_data)
                 except (IndexError, ValueError): continue

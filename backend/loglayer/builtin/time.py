@@ -2,10 +2,10 @@
 import re
 from datetime import datetime
 from loglayer.ui import StrInput
-from loglayer.core import BaseLayer, LayerStage
+from loglayer.core import DataProcessingLayer
 
-class TimeLayer(BaseLayer):
-    stage = LayerStage.LOGIC
+class TimeLayer(DataProcessingLayer):
+    """时间范围图层：按时间戳筛选日志"""
     display_name = "时间范围"
     description = "按时间戳筛选日志"
     icon = "time"
@@ -32,15 +32,12 @@ class TimeLayer(BaseLayer):
             if self.end:
                 self.end_dt = datetime.strptime(self.end, self.format)
         except Exception as e:
-            # Silent fail or log? For now silent as it runs per line
             pass
 
     def filter_line(self, content: str, index: int = -1) -> bool:
         if not self.pattern_re: return True
         if not self.start_dt and not self.end_dt: return True
         
-        # Performance optimization note: This regex search and strptime on every line 
-        # is expensive for large files.
         match = self.pattern_re.search(content)
         if not match: 
             return False 

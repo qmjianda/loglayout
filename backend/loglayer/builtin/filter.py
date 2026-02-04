@@ -1,8 +1,9 @@
 
 from loglayer.ui import SearchInput, BoolInput
-from loglayer.core import NativeLayer
+from loglayer.core import NativeProcessingLayer
 
-class FilterLayer(NativeLayer):
+class FilterLayer(NativeProcessingLayer):
+    """过滤图层：使用 ripgrep 进行高效文本过滤"""
     display_name = "过滤图层"
     description = "使用 ripgrep 进行高效文本过滤"
     icon = "filter"

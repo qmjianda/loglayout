@@ -20,6 +20,7 @@ import { StatusBar } from './components/StatusBar';
 import { IndexingOverlay, FileLoadingSkeleton, PendingFilesWall } from './components/LoadingOverlays';
 import { LayerType } from './types';
 import { openFile, syncAll } from './bridge_client';
+import { removeFromSet, basename } from './utils';
 
 // 导入自定义 Hooks
 import {
@@ -115,6 +116,7 @@ const App: React.FC = () => {
     caseSensitive: false,
     wholeWord: false
   });
+  const [searchMode, setSearchMode] = React.useState<'highlight' | 'filter'>('highlight');
 
   // ===== UI 状态控制 (UI State) =====
   // 处理各种面板显隐、滚动定位、进度条、工作区根目录等。
@@ -255,11 +257,7 @@ const App: React.FC = () => {
       setIsProcessing(false);
       setOperationStatus(null);
       markFileLoaded(fileId);
-      setIndexingFileIds(prev => {
-        const next = new Set(prev);
-        next.delete(fileId);
-        return next;
-      });
+      setIndexingFileIds(prev => removeFromSet(prev, fileId));
     },
 
     // 当后端 Pipeline 运行结束（过滤/搜索合并）后触发
@@ -276,11 +274,7 @@ const App: React.FC = () => {
         setOperationStatus(null);
         setIsProcessing(false);
         setIsSearching(false);
-        setIndexingFileIds(prev => {
-          const next = new Set(prev);
-          next.delete(fileId);
-          return next;
-        });
+        setIndexingFileIds(prev => removeFromSet(prev, fileId));
 
         // [BUG FIX 3] Nearest jumping after search finishes
         // If we are in searching mode and no rank is selected yet, jump to the nearest!
@@ -324,11 +318,7 @@ const App: React.FC = () => {
         setOperationStatus({ op, progress: 0, error: message });
         setIsProcessing(false);
         setIsSearching(false);
-        setIndexingFileIds(prev => {
-          const next = new Set(prev);
-          next.delete(fileId);
-          return next;
-        });
+        setIndexingFileIds(prev => removeFromSet(prev, fileId));
       }
     },
 
@@ -519,6 +509,8 @@ const App: React.FC = () => {
                   matchCount={searchMatchCount}
                   currentMatch={currentMatchNumber}
                   onNavigate={findNextSearchMatchWithJump}
+                  searchMode={searchMode}
+                  onSearchModeChange={setSearchMode}
                   onClose={() => {
                     setIsFindVisible(false);
                     clearSearch();

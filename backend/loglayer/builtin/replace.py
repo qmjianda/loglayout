@@ -1,10 +1,10 @@
 
 import re
 from loglayer.ui import SearchInput, StrInput
-from loglayer.core import PluginLayer
-import html
+from loglayer.core import DataProcessingLayer
 
-class ReplaceLayer(PluginLayer):
+class ReplaceLayer(DataProcessingLayer):
+    """替换图层：使用正则表达式替换内容"""
     display_name = "替换图层"
     description = "使用正则表达式替换内容"
     icon = "transform"
@@ -19,10 +19,6 @@ class ReplaceLayer(PluginLayer):
             return content
         
         try:
-            # Check if regex is valid
-            # In a real app we might want to compile this once per update, but component is re-created often
-            # or we need to cache it. For now, recompiling is safer.
-            # Using sub to replace
             return re.sub(self.find, self.replace or "", content)
         except Exception:
             return content

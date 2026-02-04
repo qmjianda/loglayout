@@ -6,10 +6,12 @@ graph TD
     A[Native OS] -->|mmap| B(Python Backend - FastAPI)
     B <-->|REST + WebSockets| C[React Frontend]
     B -->|ripgrep| D(Large File Search/Filter)
-    B -->|Layer Engine| E(Highlight/Filter Processing)
-    B -->|IndexingWorker| F[Background Index]
-    B -->|PipelineWorker| G[Background ripgrep]
-    B -->|pywebview| H[Desktop Shell]
+    B -->|Layer Engine| E{Layer Categories}
+    E -->|Processing| F[Filter/Range/Time/Level]
+    E -->|Rendering| G[Highlight/RowTint/Bookmark]
+    B -->|IndexingWorker| H[Background Index]
+    B -->|PipelineWorker| I[Background ripgrep]
+    B -->|pywebview| J[Desktop Shell]
     C -->|On-demand Fetch| B
 ```
 
@@ -38,9 +40,27 @@ graph TD
 ## 4. Coupling Notes
 - **Communication Contract**: `main.py` WebSocket messages must match `WebBridge` signal emitters in `bridge_client.ts`.
 - **Virtualization Sync**: `LogViewer` viewport depends on `read_processed_lines` REST endpoint.
-- **Layer Sync**: Frontend calls `sync_all` REST endpoint on layer config change.
+- **Layer Sync**: Frontend calls `sync_layers` (processing) or `sync_decorations` (rendering) based on layer category.
 
-## 5. Change Log (2026-02-04)
+## 5. Change Log (2026-02-05)
+- **Layer Decoupling Architecture**: Major refactoring to separate data processing from rendering enhancement layers.
+    - **New Base Classes**: `DataProcessingLayer`, `NativeProcessingLayer`, `RenderingLayer` in `loglayer/core.py`.
+    - **Layer Categories**: `processing` (Filter, Level, Range, Time, Replace) vs `rendering` (Highlight, RowTint, Bookmark).
+    - **API Split**: Deprecated `sync_all`, replaced with `sync_layers` (full pipeline rerun) and `sync_decorations` (cache-only refresh).
+    - **Two-Zone UI**: `LayersPanel.tsx` now groups layers into "处理层" (Processing) and "渲染层" (Rendering) zones.
+    - **New Layers**: Added `RowTintLayer` (row background coloring) and `BookmarkLayer` (line marking).
+- **Search Enhancements**:
+    - **Mode Toggle**: Find widget now supports "高亮" (highlight-only) and "过滤" (filter) mode switching.
+    - **Auto-Navigate**: Search results auto-jump to nearest match on completion (VS Code parity).
+
+## 6. Change Log (2026-02-04)
+- **Code Audit & Refactoring**: Deep code review and optimization.
+    - **Test Framework Migration**: Rewrote `test_backend_core.py` and `test_unified_pipeline.py` to use `threading.Event` instead of deprecated PyQt6.
+    - **Frontend Utils Library**: Created `frontend/src/utils/index.ts` with `basename()`, `removeFromSet()`, `addToSet()`, `formatFileSize()`, `generateId()`, `debounce()`.
+    - **Duplicate Code Elimination**: Replaced 5+ instances of repeated Set operations and path parsing in `App.tsx` and `useFileManagement.ts`.
+    - **Process Management Fix**: Added `_cleanup_processes()` method in `PipelineWorker` with proper `kill()` fallback for zombie processes.
+    - **Zombie Worker Leak Fix**: Added periodic cleanup counter in `FileBridge._cleanup_zombie()` to prevent memory leaks from accumulated workers.
+    - **Dead Code Removal**: Removed unused `isLayerProcessing` state from `useSearch.ts`.
 - **Bug Fix**: Resolved "Filter Layer Empty View" issue.
     - **Root Cause**: An optimization in `PipelineWorker` was injecting `-o ^` (only match start of line) to reduce IPC overhead. This caused `ripgrep` in Fixed String mode (`-F`) to treat `^` as a literal pattern, failing to match anything.
     - **Fix**: Removed the faulty optimization. `PipelineWorker` now correctly receives full line content from native layers, ensuring compatibility with all regex/fixed-string modes.
@@ -51,7 +71,7 @@ graph TD
     - **Fix**: Moved Signal instantiation to `__init__` in all Worker classes (`IndexingWorker`, `PipelineWorker`, `StatsWorker`) to ensure instance isolation.
 - **Frontend Tweak**: Added `whitespace-pre` and `min-w-0` to `LogViewer` CSS to ensure robust text display preventing unwanted wrapping.
 
-## 6. Change Log (2026-02-03)
+## 7. Change Log (2026-02-03)
 - **Bug Fix**: Repaired Search-induced "Empty View" issue. 
     - Decoupled Global Search from the `PipelineWorker` visibility chain.
     - Search now behaves as a non-destructive highlight by default.
@@ -68,7 +88,7 @@ graph TD
     - Resolved port 3000 collision issues and clarified dev server requirement.
     - Cleaned up obsolete `qtwebchannel.js` from `index.html`.
 
-## 6. Change Log (2026-02-02) 
+## 8. Change Log (2026-02-02) 
 - **Architecture Refactor**: Migrated from PyQt to FastAPI + pywebview.
 - **Project Structure Reorganization**: 
     - Consolidated all `.log` files into `tests/logs/`.

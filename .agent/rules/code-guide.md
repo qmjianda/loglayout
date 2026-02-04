@@ -22,4 +22,5 @@ R3: BUG 闭环原则 (Bug-Closure)
 R4: 嵌入式开发习惯 (Embedded Best Practices)
 Windows 优先： 避免使用 Shell 命令，优先使用 Python 脚本或 Windows 原生命令处理文件。
 
+
 资源敏感： 修改核心算法（如日志索引）时，必须在文档中注明对内存和 CPU 的潜在影响。

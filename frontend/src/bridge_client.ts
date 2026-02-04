@@ -94,6 +94,9 @@ class WebBridge implements FileBridgeAPI {
     async load_workspace_config(path: string) { return this.get('load_workspace_config', { folder_path: path }); }
     async ready() { return this.post('ready'); }
     async sync_layers(fileId: string, json: string) { return this.post('sync_layers', { file_id: fileId, layers_json: json }); }
+    async sync_decorations(fileId: string, json: string) {
+        return this.post('sync_decorations', { file_id: fileId, layers_json: json });
+    }
     async sync_all(fileId: string, layersJson: string, searchJson: string) {
         return this.post('sync_all', { file_id: fileId, layers_json: layersJson, search_json: searchJson });
     }
@@ -150,6 +153,14 @@ export async function readProcessedLines(fileId: string, start: number, count: n
 export async function syncAll(fileId: string, layers: any[], search: any): Promise<void> {
     if (!fileBridge) return;
     fileBridge.sync_all(fileId, JSON.stringify(layers), JSON.stringify(search));
+}
+
+/**
+ * 仅同步渲染层配置 (快速响应，不重跑 Pipeline)
+ */
+export async function syncDecorations(fileId: string, layers: any[]): Promise<void> {
+    if (!fileBridge) return;
+    (fileBridge as any).sync_decorations(fileId, JSON.stringify(layers));
 }
 
 export async function searchRipgrep(fileId: string, query: string, regex: boolean = false, caseSensitive: boolean = false): Promise<boolean> {

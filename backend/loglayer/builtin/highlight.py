@@ -1,10 +1,10 @@
 
 import re
 from loglayer.ui import SearchInput, ColorInput, RangeInput
-from loglayer.core import BaseLayer, LayerStage
+from loglayer.core import RenderingLayer
 
-class HighlightLayer(BaseLayer):
-    stage = LayerStage.DECOR
+class HighlightLayer(RenderingLayer):
+    """高亮图层：对匹配文本进行着色"""
     display_name = "高亮图层"
     description = "对匹配文本进行着色"
     icon = "highlight"

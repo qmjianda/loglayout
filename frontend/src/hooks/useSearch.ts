@@ -8,10 +8,13 @@ import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import { syncAll } from '../bridge_client';
 import { LogLayer } from '../types';
 
+export type SearchMode = 'highlight' | 'filter';
+
 export interface SearchConfig {
     regex: boolean;
     caseSensitive: boolean;
     wholeWord?: boolean;
+    mode?: SearchMode;
 }
 
 export interface UseSearchProps {
@@ -60,7 +63,6 @@ export function useSearch({
     const [currentMatchRank, setCurrentMatchRank] = useState(-1);
     const [currentMatchIndex, setCurrentMatchIndex] = useState(-1);
     const [isSearching, setIsSearching] = useState(false);
-    const [isLayerProcessing, setIsLayerProcessing] = useState(false);
 
     // Sync with backend when layers or search changes
     useEffect(() => {
@@ -92,8 +94,6 @@ export function useSearch({
                 setCurrentMatchRank(-1);
                 setCurrentMatchIndex(-1);
             }
-
-            setIsLayerProcessing(false);
         }, 300);
 
         return () => clearTimeout(timer);

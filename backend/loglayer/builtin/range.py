@@ -1,8 +1,9 @@
 
 from loglayer.ui import IntInput
-from loglayer.core import PluginLayer
+from loglayer.core import DataProcessingLayer
 
-class RangeLayer(PluginLayer):
+class RangeLayer(DataProcessingLayer):
+    """范围图层：显示指定行号范围内的内容"""
     display_name = "范围图层"
     description = "显示指定行号范围内的内容"
     icon = "range"
@@ -30,8 +31,5 @@ class RangeLayer(PluginLayer):
         self.current_count = 0
 
     def filter_line(self, content: str, index: int = -1) -> bool:
-        # We ignore the physical 'index' and communicate based on 
-        # how many lines have reached this layer so far.
         self.current_count += 1
-        
         return self.start_line <= self.current_count <= self.end_line
