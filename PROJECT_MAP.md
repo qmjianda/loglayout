@@ -50,6 +50,11 @@ graph TD
     - **Two-Zone UI**: `LayersPanel.tsx` now groups layers into "处理层" (Processing) and "渲染层" (Rendering) zones.
     - **New Layers**: Added `RowTintLayer` (row background coloring) and `BookmarkLayer` (line marking).
 - **Bug Fixes**:
+    - **Packaging Pipeline**: Optimized and fixed multiple packaging issues.
+        - **Frontend Build**: Updated `vite.config.ts` to output to root `dist`, ensuring `www` is populated.
+        - **Binary Filtering**: Excluded ripgrep source folders and archives (`ripgrep-*`) from the package.
+        - **Linux Permissions**: Added automatic `chmod +x` for bundled `rg` in `LogLayer.sh`.
+        - **Asset Inclusion**: Added `README.md` to the distribution.
     - **Special Characters Filter**: Fixed an issue where queries starting with a hyphen (e.g., `- 'in`) returned empty results. Forced `-e` flag in `ripgrep` command to explicitly treat queries as patterns.
     - **Regression**: Verified via `tests/reproduce_special_char_bug.py`.
 - **Search Enhancements**:

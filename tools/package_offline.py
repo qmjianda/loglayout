@@ -41,23 +41,29 @@ def package_app():
             app_dir, 
             ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "venv", ".env")
         )
+        # Copy README.md to dist_dir
+        if (root_dir / "README.md").exists():
+            shutil.copy2(root_dir / "README.md", dist_dir / "README.md")
+            print("Copied README.md")
     except Exception as e:
-        print(f"Failed to copy backend: {e}")
+        print(f"Failed to copy backend/README: {e}")
         sys.exit(1)
 
     print("[3.5/4] Copying Binary Dependencies (rg.exe)...")
     bin_dir = root_dir / "bin"
     target_bin = app_dir / "bin"
     if bin_dir.exists():
-        shutil.copytree(bin_dir, target_bin)
+        shutil.copytree(
+            bin_dir, 
+            target_bin,
+            ignore=shutil.ignore_patterns("ripgrep-*") # Exclude source folders and archives
+        )
     else:
         print("Warning: bin directory not found! Global search features will fail.")
 
     print("[4/4] Copying Frontend Build...")
-    frontend_dist = root_dir / "dist" # Vite build goes to projects root in current config
-    if not frontend_dist.exists():
-        # Fallback to frontend/dist if not in root
-        frontend_dist = frontend_dir / "dist"
+    # Vite build goes to projects root in updated config
+    frontend_dist = root_dir / "dist"
 
     target_www = app_dir / "www"
     
@@ -88,7 +94,7 @@ def package_app():
                 "--onedir",
                 "--windowed",
                 f"--add-data=dist{add_data_sep}www", # Bundle the built static files
-                f"--add-data=bin{add_data_sep}bin",   # Bundle ripgrep
+                f"--add-data=dist_offline/app/bin{add_data_sep}bin",   # Bundle filtered ripgrep
                 "--paths=backend",
                 "--name=LogLayer",
                 "--clean" # Clean cache for a fresh build
@@ -150,7 +156,16 @@ start "LogLayer" /B pythonw app\\main.py %*
     sh_content = """#!/bin/bash
 cd "$(dirname "$0")"
 
+# Ensure ripgrep has execute permissions
+if [ -f "app/bin/linux/rg" ]; then
+    chmod +x app/bin/linux/rg 2>/dev/null
+fi
+
 if [ -f "LogLayer_Standalone/LogLayer" ]; then
+    chmod +x LogLayer_Standalone/LogLayer 2>/dev/null
+    if [ -f "LogLayer_Standalone/bin/linux/rg" ]; then
+        chmod +x LogLayer_Standalone/bin/linux/rg 2>/dev/null
+    fi
     ./LogLayer_Standalone/LogLayer "$@"
     exit 0
 fi
