@@ -49,6 +49,9 @@ graph TD
     - **API Split**: Deprecated `sync_all`, replaced with `sync_layers` (full pipeline rerun) and `sync_decorations` (cache-only refresh).
     - **Two-Zone UI**: `LayersPanel.tsx` now groups layers into "处理层" (Processing) and "渲染层" (Rendering) zones.
     - **New Layers**: Added `RowTintLayer` (row background coloring) and `BookmarkLayer` (line marking).
+- **Bug Fixes**:
+    - **Special Characters Filter**: Fixed an issue where queries starting with a hyphen (e.g., `- 'in`) returned empty results. Forced `-e` flag in `ripgrep` command to explicitly treat queries as patterns.
+    - **Regression**: Verified via `tests/reproduce_special_char_bug.py`.
 - **Search Enhancements**:
     - **Mode Toggle**: Find widget now supports "高亮" (highlight-only) and "过滤" (filter) mode switching.
     - **Auto-Navigate**: Search results auto-jump to nearest match on completion (VS Code parity).

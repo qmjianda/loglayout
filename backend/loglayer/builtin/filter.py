@@ -23,5 +23,9 @@ class FilterLayer(NativeProcessingLayer):
         if self.wholeWord: args.append("-w")
         if self.invert: args.insert(0, "-v")
         
+        # 使用 -e 显式指定模式，防止 query 以 - 开头导致 rg 解析错误
+        if "-e" not in args:
+            args.append("-e")
+        
         args.append(self.query)
         return args
