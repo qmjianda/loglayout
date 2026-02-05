@@ -184,17 +184,23 @@ export const LogViewer: React.FC<LogViewerProps> = ({
     return () => container.removeEventListener('wheel', handleWheel);
   }, [useScrollScaling, scaleFactor]);
 
-  // 处理文本选择弹窗（右键菜单的简易实现）
-  const handleMouseUp = () => {
+  // 处理右键菜单
+  const handleContextMenu = (e: React.MouseEvent, index?: number) => {
+    e.preventDefault();
     const selection = window.getSelection();
-    if (!selection || selection.isCollapsed) return;
-    if (!containerRef.current?.contains(selection.anchorNode)) return;
-    const text = selection.toString().trim();
-    if (!text) return;
-    const range = selection.getRangeAt(0);
-    const rect = range.getBoundingClientRect();
-    const menuY = rect.top - 40 < 0 ? rect.bottom + 5 : rect.top - 40;
-    setContextMenu({ x: rect.left + (rect.width / 2), y: menuY, text });
+    const selectedText = selection?.toString().trim() || '';
+
+    setContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      text: selectedText,
+      lineIndex: index
+    });
+  };
+
+  const handleCopy = (text: string) => {
+    navigator.clipboard.writeText(text);
+    setContextMenu(null);
   };
 
   useEffect(() => {
@@ -264,8 +270,8 @@ export const LogViewer: React.FC<LogViewerProps> = ({
     <div
       ref={containerRef}
       onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
-      onMouseUp={handleMouseUp}
-      className="flex-1 overflow-auto bg-[#1e1e1e] font-mono text-[12px] relative custom-scrollbar"
+      onContextMenu={(e) => handleContextMenu(e)}
+      className="flex-1 overflow-auto bg-[#1e1e1e] font-mono text-[12px] relative custom-scrollbar select-text"
     >
       {/* 虚拟高度占位层 */}
       <div style={{ height: `${virtualTotalHeight}px`, width: '100%', position: 'relative' }}>
@@ -293,6 +299,7 @@ export const LogViewer: React.FC<LogViewerProps> = ({
               <div
                 key={`${originalIndex}-${idx}`}
                 onClick={() => onLineClick?.(absoluteIdx)}
+                onContextMenu={(e) => handleContextMenu(e, originalIndex)}
                 className={`flex group hover:bg-[#2a2d2e] px-4 h-[20px] items-center whitespace-pre border-l-2 transition-colors cursor-default overflow-hidden
                   ${isMarked ? 'border-yellow-500' : 'border-transparent'}
                   ${isHighlighted ? 'bg-blue-500/20' : ''}`}
@@ -312,22 +319,69 @@ export const LogViewer: React.FC<LogViewerProps> = ({
                     #{(originalIndex + 1).toLocaleString()}
                   </span>
                 </div>
-                <div className="flex-1 text-[#d4d4d4] overflow-hidden whitespace-pre min-w-0">{renderLineContent(line)}</div>
+                <div className="flex-1 text-[#d4d4d4] overflow-hidden whitespace-pre min-w-0 pointer-events-auto select-text">{renderLineContent(line)}</div>
               </div>
             );
           })}
         </div>
       </div>
 
-      {/* 快速菜单组件（选中文字时出现的浮窗） */}
+      {/* 自定义右键菜单 */}
       {contextMenu && (
         <div
-          style={{ position: 'fixed', top: contextMenu.y, left: contextMenu.x, transform: 'translateX(-50%)', zIndex: 1000 }}
-          className="context-menu-popup bg-[#2d2d30] border border-[#454545] shadow-2xl rounded-md flex overflow-hidden ring-1 ring-black/50"
+          style={{ position: 'fixed', top: contextMenu.y, left: contextMenu.x, zIndex: 1000 }}
+          className="context-menu-popup bg-[#252526] border border-[#454545] shadow-2xl rounded py-1 min-w-[160px] flex flex-col ring-1 ring-black/50 animate-in fade-in zoom-in-95 duration-100"
           onMouseDown={e => e.stopPropagation()}
         >
-          <button title="过滤" onClick={() => { onAddLayer?.(LayerType.FILTER, { query: contextMenu.text }); setContextMenu(null); }} className="px-3 py-1.5 hover:bg-[#3e3e42] text-gray-200 text-xs flex items-center gap-1 transition-colors">过滤</button>
-          <button title="高亮" onClick={() => { onAddLayer?.(LayerType.HIGHLIGHT, { query: contextMenu.text, color: '#facc15' }); setContextMenu(null); }} className="px-3 py-1.5 hover:bg-[#3e3e42] text-gray-200 text-xs flex items-center gap-1 transition-colors">高亮</button>
+          {contextMenu.text && (
+            <>
+              <div className="px-3 py-1 text-[9px] uppercase font-bold text-gray-500 border-b border-[#333] mb-1">选中文本: "{contextMenu.text.length > 15 ? contextMenu.text.substring(0, 15) + '...' : contextMenu.text}"</div>
+              <button
+                onClick={() => { onAddLayer?.(LayerType.FILTER, { query: contextMenu.text }); setContextMenu(null); }}
+                className="px-3 py-1.5 hover:bg-blue-600 text-gray-200 hover:text-white text-xs flex justify-between items-center transition-colors"
+              >
+                <span>以此过滤</span>
+                <span className="opacity-40 text-[10px]">Filter</span>
+              </button>
+              <button
+                onClick={() => { onAddLayer?.(LayerType.HIGHLIGHT, { query: contextMenu.text, color: '#facc15' }); setContextMenu(null); }}
+                className="px-3 py-1.5 hover:bg-blue-600 text-gray-200 hover:text-white text-xs flex justify-between items-center transition-colors"
+              >
+                <span>以此高亮</span>
+                <span className="opacity-40 text-[10px]">Highlight</span>
+              </button>
+              <button
+                onClick={() => handleCopy(contextMenu.text)}
+                className="px-3 py-1.5 hover:bg-blue-600 text-gray-200 hover:text-white text-xs flex justify-between items-center transition-colors"
+              >
+                <span>复制选中内容</span>
+                <span className="opacity-40 text-[10px]">Copy</span>
+              </button>
+              <div className="h-[1px] bg-[#333] my-1" />
+            </>
+          )}
+
+          {contextMenu.lineIndex !== undefined && (
+            <button
+              onClick={() => { onToggleBookmark?.(contextMenu.lineIndex!); setContextMenu(null); }}
+              className="px-3 py-1.5 hover:bg-blue-600 text-gray-200 hover:text-white text-xs flex justify-between items-center transition-colors"
+            >
+              <span>{bridgedLines.get(startIndex + (contextMenu.lineIndex - (bridgedLines.get(contextMenu.lineIndex) as LogLine)?.index || 0)) ? '切换书签' : '切换书签'}</span>
+              <span className="opacity-40 text-[10px]">F2</span>
+            </button>
+          )}
+
+          <button
+            onClick={() => {
+              const line = bridgedLines.get(startIndex + (visibleLines.findIndex(l => (l as LogLine)?.index === contextMenu.lineIndex)));
+              const content = typeof line === 'string' ? line : (line as LogLine)?.content || '';
+              handleCopy(content);
+            }}
+            className="px-3 py-1.5 hover:bg-blue-600 text-gray-200 hover:text-white text-xs flex justify-between items-center transition-colors"
+          >
+            <span>复制整行</span>
+            <span className="opacity-40 text-[10px]">Copy Line</span>
+          </button>
         </div>
       )}
     </div>
