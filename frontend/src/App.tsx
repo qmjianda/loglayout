@@ -8,7 +8,7 @@
  * - useBridge: 处理前端与 Python 后端的信号监听与数据同步。
  */
 
-import React, { useMemo, useCallback, useEffect } from 'react';
+import React, { useMemo, useCallback, useEffect, useState } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { LogViewer } from './components/LogViewer';
 import { SearchPanel } from './components/SearchPanel';
@@ -18,8 +18,9 @@ import { UnifiedPanel, FileInfo } from './components/UnifiedPanel';
 import { HelpPanel } from './components/HelpPanel';
 import { StatusBar } from './components/StatusBar';
 import { IndexingOverlay, FileLoadingSkeleton, PendingFilesWall } from './components/LoadingOverlays';
+import { RemotePathPicker } from './components/RemotePathPicker';
 import { LayerType } from './types';
-import { openFile, syncAll } from './bridge_client';
+import { openFile, syncAll, hasNativeDialogs, toggleBookmark } from './bridge_client';
 import { removeFromSet, basename } from './utils';
 
 // 导入自定义 Hooks
@@ -30,6 +31,7 @@ import {
   useSearch,
   useUIState,
   useWorkspaceConfig,
+  useRemotePathPicker,
   setBridgedCount,
   FileLoadedInfo
 } from './hooks';
@@ -352,13 +354,70 @@ const App: React.FC = () => {
 
   // 导航到下一个搜索匹配项，并自动滚动到底部/指定行已被移动到上方
 
-  // 处理文件夹选择，并将其设置为当前工作区根目录
-  const handleFolderSelectWithWorkspace = useCallback(async () => {
-    const result = await handleNativeFolderSelect();
-    if (result) {
-      setWorkspaceRoot(result);
+  // ===== 远程路径选择器 (Remote Path Picker) =====
+  // 用于 --no-ui 模式下替代原生文件对话框
+  const remotePathPicker = useRemotePathPicker();
+  const {
+    isOpen: isRemotePickerOpen,
+    mode: remotePickerMode,
+    listDirectory: remoteListDirectory,
+    onSelect: handleRemotePathSelect,
+    onOpenChange: setRemotePickerOpen
+  } = remotePathPicker;
+
+  // 远程选择器的确认回调
+  const [remotePickerCallback, setRemotePickerCallback] = useState<((result: { path: string; isDir: boolean }) => void) | null>(null);
+
+  // 打开远程统一选择器
+  const openRemotePicker = useCallback((callback: (result: { path: string; isDir: boolean }) => void) => {
+    setRemotePickerCallback(() => callback);
+    remotePathPicker.openPathPicker();
+  }, [remotePathPicker]);
+
+  // 处理远程选择器结果
+  const handleRemotePathSelected = useCallback((path: string, isDir: boolean) => {
+    handleRemotePathSelect(path, isDir);
+    if (remotePickerCallback) {
+      remotePickerCallback({ path, isDir });
+      setRemotePickerCallback(null);
     }
-  }, [handleNativeFolderSelect, setWorkspaceRoot]);
+  }, [handleRemotePathSelect, remotePickerCallback]);
+
+  // 处理远程选择器关闭
+  const handleRemotePickerClose = useCallback((open: boolean) => {
+    setRemotePickerOpen(open);
+    if (!open) {
+      setRemotePickerCallback(null);
+    }
+  }, [setRemotePickerOpen]);
+
+  // 处理统一打开逻辑 (文件或项目)
+  const handleOpen = useCallback(async () => {
+    // 优先尝试原生对话框（如果支持同时选文件和文件夹，但目前 bridge 分开，所以逻辑上先尝试原生文件夹选择）
+    // 实际上更优雅的方式是根据 hasNativeDialogs 直接分流
+    const hasDialogs = await hasNativeDialogs();
+
+    if (hasDialogs) {
+      // 原生模式下目前仍保持分开或弹出选择（由于 bridge 系统限制）
+      // 这里简道起见，或者调用原生 select_folder 做演示，后续可深度整合 bridge
+      const result = await handleNativeFolderSelect();
+      if (result) {
+        setWorkspaceRoot(result);
+      }
+    } else {
+      // 远程模式：使用通用的 openPathPicker
+      openRemotePicker(({ path, isDir }) => {
+        if (isDir) {
+          const folderName = basename(path);
+          setWorkspaceRoot({ path, name: folderName });
+        } else {
+          // 如果是文件，直接打开
+          const fileName = basename(path);
+          handleOpenFileByPath(path, fileName);
+        }
+      });
+    }
+  }, [handleNativeFolderSelect, setWorkspaceRoot, openRemotePicker, handleOpenFileByPath]);
 
   return (
     <div
@@ -448,8 +507,7 @@ const App: React.FC = () => {
               onOpenFileByPath={handleOpenFileByPath}
               files={fileInfoList}
               activeFileId={activeFileId}
-              onFileSelect={handleNativeFileSelect}
-              onFolderSelect={handleFolderSelectWithWorkspace}
+              onOpen={handleOpen}
               onFileActivate={handleFileActivateWithLoad}
               onFileRemove={handleFileRemove}
               layers={layers}
@@ -585,6 +643,12 @@ const App: React.FC = () => {
                                   setHighlightedIndex(idx);
                                 }}
                                 onAddLayer={(type, config) => addLayer(type, config)}
+                                onToggleBookmark={async (lineIndex) => {
+                                  if (pane.fileId) {
+                                    await toggleBookmark(pane.fileId, lineIndex);
+                                    triggerUpdate();
+                                  }
+                                }}
                                 updateTrigger={bridgedUpdateTrigger}
                               />
                             )}
@@ -596,11 +660,11 @@ const App: React.FC = () => {
                           // 无文件时的欢迎界面
                           <div
                             className="flex-1 flex flex-col items-center justify-center text-gray-600 bg-dark-2 cursor-pointer hover:bg-dark-1 transition-colors"
-                            onClick={handleNativeFileSelect}
+                            onClick={handleOpen}
                           >
                             <svg className="w-12 h-12 mb-4 opacity-20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="1" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
                             <p className="text-sm font-medium">将日志文件拖拽至此处打开</p>
-                            <p className="text-[10px] mt-2 opacity-50">或点击浏览本地文件</p>
+                            <p className="text-[10px] mt-2 opacity-50">或点击浏览并打开文件/文件夹</p>
                           </div>
                         )}
                       </div>
@@ -613,7 +677,6 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      {/* 底部状态栏 */}
       <StatusBar
         lines={activeFile?.lineCount || 0}
         totalLines={activeFile?.rawCount || 0}
@@ -624,6 +687,16 @@ const App: React.FC = () => {
         searchMatchCount={searchMatchCount}
         currentLine={(highlightedIndex !== null) ? highlightedIndex + 1 : undefined}
         pendingCliFiles={pendingCliFiles}
+      />
+
+      {/* 远程路径选择器 - 用于 --no-ui 模式替代原生对话框 */}
+      <RemotePathPicker
+        open={isRemotePickerOpen}
+        onOpenChange={handleRemotePickerClose}
+        onSelect={handleRemotePathSelected}
+        mode={remotePickerMode}
+        title={remotePickerMode === 'folder' ? '选择文件夹' : remotePickerMode === 'file' ? '选择文件' : '选择路径'}
+        listDirectory={remoteListDirectory}
       />
     </div>
   );

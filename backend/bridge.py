@@ -725,6 +725,9 @@ class FileBridge:
                     line_data = {"index": real_idx, "content": content, "highlights": highlights}
                     if row_style:
                         line_data["rowStyle"] = row_style
+                        # 提升 isBookmarked 到根属性 isMarked
+                        if row_style.get('isBookmarked'):
+                            line_data["isMarked"] = True
                     if len(session.cache) < 5000: session.cache[i] = line_data
                     results.append(line_data)
                 except (IndexError, ValueError): continue
@@ -820,3 +823,102 @@ class FileBridge:
         except Exception as e:
             print(f"[Workspace] Error loading config: {e}")
             return ""
+
+    def toggle_bookmark(self, file_id: str, line_index: int) -> str:
+        """
+        切换指定行的书签状态。
+        如果没有书签图层，自动创建一个。
+        返回当前书签列表的 JSON。
+        """
+        if file_id not in self._sessions:
+            return "[]"
+        
+        session = self._sessions[file_id]
+        
+        # 查找现有的书签图层
+        bookmark_layer = None
+        for layer in session.rendering_instances:
+            if layer.__class__.__name__ == 'BookmarkLayer':
+                bookmark_layer = layer
+                break
+        
+        # 如果没有书签图层，创建一个
+        if bookmark_layer is None:
+            bookmark_layer = self._registry.create_layer_instance('BOOKMARK', {'color': '#f59e0b', 'bookmarks': []})
+            if bookmark_layer:
+                bookmark_layer.id = f"system-bookmark-{file_id}"
+                session.rendering_instances.append(bookmark_layer)
+                # 同步到 layers 配置
+                session.layers.append({
+                    'id': bookmark_layer.id,
+                    'type': 'BOOKMARK',
+                    'name': '书签',
+                    'enabled': True,
+                    'isSystemManaged': True,
+                    'config': {'color': '#f59e0b', 'bookmarks': []}
+                })
+        
+        if bookmark_layer is None:
+            return "[]"
+        
+        # 切换书签
+        if line_index in bookmark_layer.bookmarks:
+            bookmark_layer.bookmarks.remove(line_index)
+        else:
+            bookmark_layer.bookmarks.add(line_index)
+        
+        # 更新配置中的书签列表
+        for l_conf in session.layers:
+            if l_conf.get('id') == bookmark_layer.id:
+                l_conf['config']['bookmarks'] = list(bookmark_layer.bookmarks)
+                break
+        
+        # 清除缓存并刷新
+        session.cache.clear()
+        indices_len = len(session.visible_indices) if session.visible_indices is not None else len(session.line_offsets)
+        matches_len = len(session.search_matches) if session.search_matches is not None else 0
+        self.pipelineFinished.emit(file_id, indices_len, matches_len)
+        
+        return json.dumps(sorted(list(bookmark_layer.bookmarks)))
+
+    def get_bookmarks(self, file_id: str) -> str:
+        """返回当前文件的书签列表 JSON"""
+        if file_id not in self._sessions:
+            return "[]"
+        
+        session = self._sessions[file_id]
+        
+        for layer in session.rendering_instances:
+            if layer.__class__.__name__ == 'BookmarkLayer':
+                return json.dumps(sorted(list(layer.bookmarks)))
+        
+        return "[]"
+
+    def get_nearest_bookmark_index(self, file_id: str, current_index: int, direction: str) -> int:
+        """查找最近的书签索引"""
+        if file_id not in self._sessions:
+            return -1
+        
+        session = self._sessions[file_id]
+        bookmarks = []
+        
+        for layer in session.rendering_instances:
+            if layer.__class__.__name__ == 'BookmarkLayer':
+                bookmarks = sorted(list(layer.bookmarks))
+                break
+        
+        if not bookmarks:
+            return -1
+        
+        import bisect
+        
+        if direction == 'next':
+            idx = bisect.bisect_right(bookmarks, current_index)
+            if idx < len(bookmarks):
+                return bookmarks[idx]
+            return bookmarks[0]  # 循环到开头
+        else:  # prev
+            idx = bisect.bisect_left(bookmarks, current_index) - 1
+            if idx >= 0:
+                return bookmarks[idx]
+            return bookmarks[-1]  # 循环到末尾

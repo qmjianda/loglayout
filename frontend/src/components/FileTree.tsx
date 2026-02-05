@@ -37,6 +37,7 @@ export const FileTree: React.FC<FileTreeProps> = ({
         <div className="flex-1 overflow-y-auto custom-scrollbar select-none py-1 bg-[#1e1e1e]">
             {tree && (
                 <TreeNode
+                    key={tree.path}
                     item={tree}
                     level={0}
                     onFileClick={onFileClick}
@@ -68,6 +69,12 @@ const TreeNode: React.FC<any> = ({
     const [isExpanded, setIsExpanded] = useState(isRoot);
     const [children, setChildren] = useState<FileTreeItem[] | null>(null);
     const [isLoading, setIsLoading] = useState(false);
+
+    // Reset state if item path changes (though key should handle this, secondary safety)
+    useEffect(() => {
+        setChildren(null);
+        setIsExpanded(isRoot);
+    }, [item.path, isRoot]);
 
     // Auto-load content when expanded
     useEffect(() => {

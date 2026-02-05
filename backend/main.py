@@ -116,6 +116,11 @@ async def websocket_endpoint(websocket: WebSocket):
 def get_platform():
     return sys.platform
 
+@app.get("/api/has_native_dialogs")
+def has_native_dialogs():
+    """检查是否支持原生文件对话框（用于 --no-ui 模式检测）"""
+    return hasattr(bridge, 'window') and bridge.window is not None
+
 @app.post("/api/open_file")
 def open_file(data: dict = Body(...)):
     return bridge.open_file(data['file_id'], data['file_path'])
@@ -187,6 +192,13 @@ def list_logs_in_folder(folder_path: str):
 def list_directory(folder_path: str):
     return json.loads(bridge.list_directory(folder_path))
 
+@app.post("/api/list_directory")
+def list_directory_post(data: dict = Body(...)):
+    """POST 版本的目录列表 API，用于远程路径选择器"""
+    folder_path = data.get('path', '')
+    items = json.loads(bridge.list_directory(folder_path))
+    return {"items": items, "path": folder_path}
+
 @app.post("/api/save_workspace_config")
 def save_workspace_config(data: dict = Body(...)):
     return bridge.save_workspace_config(data['folder_path'], data['config_json'])
@@ -194,6 +206,26 @@ def save_workspace_config(data: dict = Body(...)):
 @app.get("/api/load_workspace_config")
 def load_workspace_config(folder_path: str):
     return bridge.load_workspace_config(folder_path)
+
+# ============================================================
+# Bookmark APIs
+# ============================================================
+
+@app.post("/api/toggle_bookmark")
+def toggle_bookmark(data: dict = Body(...)):
+    """切换指定行的书签状态"""
+    return json.loads(bridge.toggle_bookmark(data['file_id'], data['line_index']))
+
+@app.get("/api/get_bookmarks")
+def get_bookmarks(file_id: str):
+    """获取当前文件的书签列表"""
+    return json.loads(bridge.get_bookmarks(file_id))
+
+@app.get("/api/get_nearest_bookmark_index")
+def get_nearest_bookmark_index(file_id: str, current_index: int, direction: str):
+    """查找最近的书签索引"""
+    return bridge.get_nearest_bookmark_index(file_id, current_index, direction)
+
 
 # Serve Frontend
 base_dir = os.path.dirname(os.path.abspath(__file__))

@@ -9,6 +9,7 @@ graph TD
     B -->|Layer Engine| E{Layer Categories}
     E -->|Processing| F[Filter/Range/Time/Level]
     E -->|Rendering| G[Highlight/RowTint/Bookmark]
+    G -.->|New Property| K[isSystemManaged]
     B -->|IndexingWorker| H[Background Index]
     B -->|PipelineWorker| I[Background ripgrep]
     B -->|pywebview| J[Desktop Shell]
@@ -21,8 +22,8 @@ graph TD
 | :--- | :--- | :--- | :--- |
 | **Backend Core** | `backend/bridge.py` | Orchestration, Signal handling, File indexing interface | `mmap`, `fastapi`, `websockets` |
 | **Unified Logic** | `backend/loglayer/` | **Unified Layer Engine**, UI Schema generator, Plugin discovery, Built-in layers | `re`, `inspect`, `importlib` |
-| **API Server** | `backend/main.py` | FastAPI app, REST/WS routes, **pywebview** integration | `fastapi`, `uvicorn`, `pywebview` |
-| **Bridge Client** | `frontend/src/bridge_client.ts` | Frontend API, Registry access, REST + WS protocols | `fetch`, `WebSocket` |
+| **API Server** | `backend/main.py` | FastAPI app, REST/WS routes, **Bookmark API**, pywebview integration | `fastapi`, `uvicorn`, `pywebview` |
+| **Bridge Client** | `frontend/src/bridge_client.ts` | Frontend API, Bookmark & Layer registry access | `fetch`, `WebSocket` |
 | **Dynamic UI** | `frontend/src/components/DynamicUI/` | `InputMapper`, `DynamicForm`: Schema-driven configuration UI | `types.ts` |
 | **Log Viewer** | `frontend/src/components/LogViewer.tsx` | Virtual list, scroll scaling, processed line rendering | `bridge_client.ts` |
 | **State Orchest.** | `frontend/src/App.tsx` | Global file state, UI layout, hook management | All Components |
@@ -43,23 +44,25 @@ graph TD
 - **Layer Sync**: Frontend calls `sync_layers` (processing) or `sync_decorations` (rendering) based on layer category.
 
 ## 5. Change Log (2026-02-05)
-- **Layer Decoupling Architecture**: Major refactoring to separate data processing from rendering enhancement layers.
-    - **New Base Classes**: `DataProcessingLayer`, `NativeProcessingLayer`, `RenderingLayer` in `loglayer/core.py`.
-    - **Layer Categories**: `processing` (Filter, Level, Range, Time, Replace) vs `rendering` (Highlight, RowTint, Bookmark).
-    - **API Split**: Deprecated `sync_all`, replaced with `sync_layers` (full pipeline rerun) and `sync_decorations` (cache-only refresh).
-    - **Two-Zone UI**: `LayersPanel.tsx` now groups layers into "处理层" (Processing) and "渲染层" (Rendering) zones.
-    - **New Layers**: Added `RowTintLayer` (row background coloring) and `BookmarkLayer` (line marking).
-- **Bug Fixes**:
-    - **Packaging Pipeline**: Optimized and fixed multiple packaging issues.
-        - **Frontend Build**: Updated `vite.config.ts` to output to root `dist`, ensuring `www` is populated.
-        - **Binary Filtering**: Excluded ripgrep source folders and archives (`ripgrep-*`) from the package.
-        - **Linux Permissions**: Added automatic `chmod +x` for bundled `rg` in `LogLayer.sh`.
-        - **Asset Inclusion**: Added `README.md` to the distribution.
-    - **Special Characters Filter**: Fixed an issue where queries starting with a hyphen (e.g., `- 'in`) returned empty results. Forced `-e` flag in `ripgrep` command to explicitly treat queries as patterns.
-    - **Regression**: Verified via `tests/reproduce_special_char_bug.py`.
+- **Unified Opening Flow**: 整合“打开文件”与“打开项目”为统一的“浏览并打开 (Open)”入口。
+    - **Logic**: 基于 `RemotePathPicker` 的 `both` 模式，自动识别文件（直接打开）或文件夹（设为工作区）。
+    - **UI**: 侧边栏 Explorer 和欢迎界面提供一致的单入口体验。
+- **Interactive Navigation & Path Memory**:
+    - **Breadcrumbs**: 路径选择器面包屑支持点击跳转。
+    - **Refresh**: 支持 `Ctrl+R` 刷新当前目录。
+    - **Path Memory**: 使用 `localStorage` 记忆上一次打开的路径，提升连续操作效率。
+- **Core Bug Fixes**:
+    - **FileTree Sync**: 修复了切换工作区后文件浏览器内容不更新的 BUG。通过为根 `TreeNode` 增加 `key={path}` 强制销毁旧状态。
+    - **Packaging Pipeline**: 优化并解决了多个打包路径和权限问题。
+    - **Special Characters Filter**: 修复了以连字符开头的搜索查询导致结果为空的问题（强制使用 `-e` 标志）。
 - **Search Enhancements**:
     - **Mode Toggle**: Find widget now supports "高亮" (highlight-only) and "过滤" (filter) mode switching.
     - **Auto-Navigate**: Search results auto-jump to nearest match on completion (VS Code parity).
+- **Bookmark & System Managed Layers**:
+    - **Architecture**: 引入了 `isSystemManaged` 属性，允许特定功能（如书签）复用图层架构同时从用户主列表隐藏。
+    - **Interactions**: 支持点击行号区域 (Gutter) 切换书签，行号旁显示琥珀色圆点。
+    - **Backend API**: 新增 `toggle_bookmark`、`get_bookmarks`、`get_nearest_bookmark_index` (F2 导航支持)。
+    - **Debug Toggle**: 在“已打开”面板增加“系统/用户”切换开关，用于强制显示隐藏的系统图层。
 
 ## 6. Change Log (2026-02-04)
 - **Code Audit & Refactoring**: Deep code review and optimization.

@@ -1,0 +1,445 @@
+/**
+ * RemotePathPicker.css - 远程路径选择器样式
+ * 
+ * VS Code 风格的视觉效果，包含：
+ * - 暗色主题
+ * - 毛玻璃效果
+ * - 平滑动画
+ * - 键盘焦点指示器
+ */
+
+/* 遮罩层 */
+.remote-path-picker-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 10vh;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  animation: rpp-fade-in 0.15s ease-out;
+}
+
+@keyframes rpp-fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+/* 主容器 */
+.remote-path-picker-container {
+  width: 100%;
+  max-width: 600px;
+  margin: 0 16px;
+  animation: rpp-scale-in 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes rpp-scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* Command 主体 */
+.remote-path-picker-command {
+  background: #1e1e1e;
+  border: 1px solid #3c3c3c;
+  border-radius: 8px;
+  box-shadow:
+    0 25px 50px -12px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+}
+
+/* 头部 */
+.rpp-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid #2d2d2d;
+  background: #252526;
+}
+
+.rpp-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: #cccccc;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rpp-title::before {
+  content: '';
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%23DCB67A' viewBox='0 0 16 16'%3E%3Cpath d='M1 3.5A1.5 1.5 0 0 1 2.5 2h2.879a1.5 1.5 0 0 1 1.06.44L7.56 3.56A.5.5 0 0 0 7.914 3.75H13.5A1.5 1.5 0 0 1 15 5.25v7.25a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 1 12.5v-9z'/%3E%3C/svg%3E") no-repeat center;
+}
+
+.rpp-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.rpp-header-btn,
+.rpp-close-btn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: #cccccc;
+  cursor: pointer;
+  transition: all 0.1s ease;
+}
+
+.rpp-header-btn:hover,
+.rpp-close-btn:hover {
+  background: #3c3c3c;
+  color: #ffffff;
+}
+
+.rpp-header-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.rpp-header-btn:active,
+.rpp-close-btn:active {
+  background: #454545;
+}
+
+/* 输入框容器 */
+.rpp-input-container {
+  padding: 8px 12px;
+  background: #252526;
+  border-bottom: 1px solid #2d2d2d;
+}
+
+.rpp-input {
+  width: 100%;
+  padding: 8px 12px;
+  background: #3c3c3c;
+  border: 1px solid #4c4c4c;
+  border-radius: 4px;
+  color: #ffffff;
+  font-size: 13px;
+  font-family: "Consolas", "Monaco", "Courier New", monospace;
+  outline: none;
+  transition: all 0.15s ease;
+}
+
+.rpp-input::placeholder {
+  color: #808080;
+}
+
+.rpp-input:focus {
+  border-color: #0078d4;
+  box-shadow: 0 0 0 1px #0078d4;
+}
+
+/* 面包屑导航 */
+.rpp-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 12px;
+  background: #1e1e1e;
+  border-bottom: 1px solid #2d2d2d;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.rpp-breadcrumb::-webkit-scrollbar {
+  height: 4px;
+}
+
+.rpp-breadcrumb::-webkit-scrollbar-thumb {
+  background: #424242;
+  border-radius: 2px;
+}
+
+.rpp-breadcrumb-item {
+  padding: 2px 6px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: #0078d4;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.1s ease;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-decoration: none;
+}
+
+.rpp-breadcrumb-item:hover {
+  background: rgba(0, 120, 212, 0.1);
+  color: #1a89dc;
+}
+
+.rpp-breadcrumb-item:active {
+  background: rgba(0, 120, 212, 0.2);
+}
+
+.rpp-breadcrumb-sep {
+  color: #6e6e6e;
+  font-size: 12px;
+  margin: 0 2px;
+}
+
+/* 列表区域 */
+.rpp-list {
+  max-height: 400px;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+
+.rpp-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.rpp-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.rpp-list::-webkit-scrollbar-thumb {
+  background: #424242;
+  border-radius: 4px;
+  border: 2px solid #1e1e1e;
+}
+
+/* 分组 */
+.rpp-group {
+  padding: 4px 0;
+}
+
+.rpp-group [cmdk-group-heading] {
+  padding: 4px 12px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6e6e6e;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* 列表项 */
+.rpp-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  margin: 1px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.1s ease;
+  position: relative;
+}
+
+.rpp-item[data-selected="true"] {
+  background: #094771;
+}
+
+.rpp-item:not([data-selected="true"]):hover {
+  background: #2a2d2e;
+}
+
+.rpp-item-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.rpp-item-parent {
+  border-bottom: 1px solid #2d2d2d;
+  margin-bottom: 4px;
+  padding-bottom: 12px;
+}
+
+.rpp-item-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  color: #6e6e6e;
+}
+
+.rpp-item-name {
+  flex: 1;
+  font-size: 13px;
+  color: #cccccc;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rpp-item[data-selected="true"] .rpp-item-name {
+  color: #ffffff;
+}
+
+.rpp-item-path {
+  font-size: 11px;
+  color: #6e6e6e;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
+}
+
+.rpp-item-size {
+  font-size: 11px;
+  color: #6e6e6e;
+  flex-shrink: 0;
+  min-width: 60px;
+  text-align: right;
+}
+
+/* 加载状态 */
+.rpp-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  color: #808080;
+  font-size: 13px;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.rpp-loading .animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+/* 错误状态 */
+.rpp-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  color: #f48771;
+  font-size: 13px;
+}
+
+/* 空状态 */
+.rpp-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  color: #808080;
+  font-size: 13px;
+}
+
+/* 底部操作栏 */
+.rpp-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-top: 1px solid #2d2d2d;
+  background: #252526;
+}
+
+.rpp-footer-hint {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 11px;
+  color: #6e6e6e;
+}
+
+.rpp-footer-hint kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 6px;
+  margin-right: 4px;
+  background: #3c3c3c;
+  border: 1px solid #4c4c4c;
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 10px;
+  color: #cccccc;
+}
+
+.rpp-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rpp-btn {
+  padding: 6px 14px;
+  background: #3c3c3c;
+  border: 1px solid #4c4c4c;
+  border-radius: 4px;
+  color: #cccccc;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.rpp-btn:hover {
+  background: #4c4c4c;
+  border-color: #5c5c5c;
+}
+
+.rpp-btn-primary {
+  background: #0078d4;
+  border-color: #0078d4;
+  color: #ffffff;
+}
+
+.rpp-btn-primary:hover {
+  background: #1084d8;
+  border-color: #1084d8;
+}
+
+/* 响应式适配 */
+@media (max-width: 640px) {
+  .remote-path-picker-container {
+    margin: 0 8px;
+    max-height: 80vh;
+  }
+
+  .rpp-footer-hint {
+    display: none;
+  }
+
+  .rpp-item-path {
+    display: none;
+  }
+}

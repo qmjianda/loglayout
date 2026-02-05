@@ -22,8 +22,7 @@ interface UnifiedPanelProps {
     // 文件相关
     files: FileInfo[];
     activeFileId: string | null;
-    onFileSelect: () => void;
-    onFolderSelect: () => void;
+    onOpen: () => void;
     onFileActivate: (fileId: string) => void;
     onFileRemove: (fileId: string) => void;
 
@@ -61,8 +60,7 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
     onOpenFileByPath,
     files,
     activeFileId,
-    onFileSelect,
-    onFolderSelect,
+    onOpen,
     onFileActivate,
     onFileRemove,
     layers, // Note: This prop now comes from activeFile layers but we rely on files.layers for tree
@@ -101,6 +99,9 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
     // Add layer menu state
     const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
     const menuRef = useRef<HTMLDivElement>(null);
+
+    // Debug: show system-managed layers
+    const [showSystemLayers, setShowSystemLayers] = useState(false);
 
     // Click outside to close menu
     useEffect(() => {
@@ -258,6 +259,14 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
                         <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
                     </svg>
                     <span className="text-[10px] uppercase font-black tracking-wider opacity-60">已打开</span>
+                    {/* Debug toggle for system layers */}
+                    <button
+                        onClick={(e) => { e.stopPropagation(); setShowSystemLayers(prev => !prev); }}
+                        className={`ml-2 px-1 py-0.5 text-[8px] rounded transition-colors ${showSystemLayers ? 'bg-amber-500/30 text-amber-400' : 'bg-white/5 text-gray-500 hover:text-gray-300'}`}
+                        title={showSystemLayers ? '隐藏系统图层' : '显示系统图层'}
+                    >
+                        {showSystemLayers ? '系统' : '用户'}
+                    </button>
                     <span className="ml-auto text-[9px] text-gray-500">{files.length}</span>
                 </div>
 
@@ -272,7 +281,9 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
                             files.map(file => {
                                 const isExpanded = expandedFiles[file.id] === true;
                                 const isActive = file.id === activeFileId;
-                                const hasLayers = file.layers && file.layers.length > 0;
+                                // Filter out system-managed layers unless debug mode is on
+                                const visibleLayers = file.layers ? file.layers.filter(l => showSystemLayers || !l.isSystemManaged) : [];
+                                const hasLayers = visibleLayers.length > 0;
 
                                 return (
                                     <div key={file.id} className="flex flex-col border-b border-[#111]">
@@ -354,7 +365,7 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
                                             <div className="bg-black/10 border-l border-blue-500/20 ml-5 py-0.5">
                                                 {hasLayers ? (
                                                     <LayersPanel
-                                                        layers={file.layers}
+                                                        layers={visibleLayers}
                                                         stats={isActive ? layerStats : {}}
                                                         selectedId={isActive ? selectedLayerId : null}
                                                         onSelect={isActive ? onSelectLayer : () => { }}
@@ -424,19 +435,13 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
 
                 {!collapsedSections.explorer && (
                     <div className="flex-1 flex flex-col overflow-hidden bg-dark-1">
-                        {/* 文件/文件夹选择操作 */}
-                        {!workspaceRoot && (
-                            <div className="flex gap-1 p-2 border-b border-[#333] shrink-0">
-                                <button onClick={onFileSelect} className="flex-1 flex items-center justify-center gap-1 text-[10px] py-1 bg-[#3c3c3c] hover:bg-[#444] text-gray-300 rounded transition-colors">
-                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                                    打开文件
-                                </button>
-                                <button onClick={onFolderSelect} className="flex-1 flex items-center justify-center gap-1 text-[10px] py-1 bg-[#3c3c3c] hover:bg-[#444] text-gray-300 rounded transition-colors">
-                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>
-                                    打开项目
-                                </button>
-                            </div>
-                        )}
+                        {/* 文件/文件夹选择操作 - 始终显示，以便于随时切换文件夹 */}
+                        <div className="flex gap-1 p-2 border-b border-[#111] bg-[#252526] shrink-0">
+                            <button onClick={onOpen} className="flex-1 flex items-center justify-center gap-2 text-[10px] py-1.5 bg-[#0078d4] hover:bg-[#1084d8] text-white rounded transition-colors shadow-sm font-bold" title="打开文件或项目文件夹">
+                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4" /></svg>
+                                浏览并打开 (Open)
+                            </button>
+                        </div>
 
                         {workspaceRoot ? (
                             <FileTree
@@ -449,7 +454,7 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
                         ) : (
                             <div className="p-8 text-center flex flex-col items-center justify-center gap-3">
                                 <svg className="w-12 h-12 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="1" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>
-                                <p className="text-[11px] text-gray-500 leading-relaxed">未选择项目文件夹。<br />通过“打开项目”按钮浏览目录树。</p>
+                                <p className="text-[11px] text-gray-500 leading-relaxed">未选择项目文件夹。<br />通过上方“浏览并打开”按钮选择目录或文件。</p>
                             </div>
                         )}
                     </div>

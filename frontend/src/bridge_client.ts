@@ -88,6 +88,7 @@ class WebBridge implements FileBridgeAPI {
     async close_file(fileId: string) { return this.post('close_file', { file_id: fileId }); }
     async select_files() { return JSON.stringify(await this.get('select_files')); }
     async select_folder() { return this.get('select_folder'); }
+    async has_native_dialogs() { return this.get('has_native_dialogs'); }
     async list_logs_in_folder(path: string) { return JSON.stringify(await this.get('list_logs_in_folder', { folder_path: path })); }
     async list_directory(path: string) { return JSON.stringify(await this.get('list_directory', { folder_path: path })); }
     async save_workspace_config(path: string, json: string) { return this.post('save_workspace_config', { folder_path: path, config_json: json }); }
@@ -119,6 +120,17 @@ class WebBridge implements FileBridgeAPI {
     }
     async get_layer_registry() { return JSON.stringify(await this.get('get_layer_registry')); }
     async reload_plugins() { return this.post('reload_plugins'); }
+
+    // Bookmark APIs
+    async toggle_bookmark(fileId: string, lineIndex: number) {
+        return this.post('toggle_bookmark', { file_id: fileId, line_index: lineIndex });
+    }
+    async get_bookmarks(fileId: string) {
+        return this.get('get_bookmarks', { file_id: fileId });
+    }
+    async get_nearest_bookmark_index(fileId: string, currentIndex: number, direction: string) {
+        return this.get('get_nearest_bookmark_index', { file_id: fileId, current_index: currentIndex, direction });
+    }
 }
 
 /**
@@ -224,6 +236,15 @@ export async function selectFolder(): Promise<string> {
     return fileBridge.select_folder();
 }
 
+export async function hasNativeDialogs(): Promise<boolean> {
+    if (!fileBridge) return false;
+    try {
+        return await (fileBridge as any).has_native_dialogs();
+    } catch {
+        return false;
+    }
+}
+
 export async function listLogsInFolder(folderPath: string): Promise<any[]> {
     if (!fileBridge) return [];
     try {
@@ -260,4 +281,50 @@ export async function loadWorkspaceConfig(folderPath: string): Promise<Workspace
         if (!jsonStr) return null;
         return JSON.parse(jsonStr) as WorkspaceConfig;
     } catch (e) { return null; }
+}
+
+// ============================================================
+// 书签 API (Bookmark APIs)
+// ============================================================
+
+/**
+ * 切换指定行的书签状态
+ * @returns 更新后的书签行号列表
+ */
+export async function toggleBookmark(fileId: string, lineIndex: number): Promise<number[]> {
+    if (!fileBridge) return [];
+    try {
+        const res = await (fileBridge as any).toggle_bookmark(fileId, lineIndex);
+        return typeof res === 'string' ? JSON.parse(res) : res;
+    } catch (e) {
+        console.error('[Bridge] toggleBookmark error:', e);
+        return [];
+    }
+}
+
+/**
+ * 获取当前文件的书签列表
+ */
+export async function getBookmarks(fileId: string): Promise<number[]> {
+    if (!fileBridge) return [];
+    try {
+        const res = await (fileBridge as any).get_bookmarks(fileId);
+        return typeof res === 'string' ? JSON.parse(res) : res;
+    } catch (e) {
+        console.error('[Bridge] getBookmarks error:', e);
+        return [];
+    }
+}
+
+/**
+ * 获取最近的书签索引
+ */
+export async function getNearestBookmarkIndex(fileId: string, currentIndex: number, direction: 'next' | 'prev'): Promise<number> {
+    if (!fileBridge) return -1;
+    try {
+        return await (fileBridge as any).get_nearest_bookmark_index(fileId, currentIndex, direction);
+    } catch (e) {
+        console.error('[Bridge] getNearestBookmarkIndex error:', e);
+        return -1;
+    }
 }

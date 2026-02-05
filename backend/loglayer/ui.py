@@ -53,6 +53,8 @@ class Component:
     display_name = "Base Component" # 在图层列表中显示的名称
     description = ""               # 描述文案
     inputs = []                    # 该组件所需的输入项列表
+    is_system_managed = False      # 是否为系统托管图层（隐藏在图层列表中）
+
 
     def __init__(self, config=None):
         self.config = config or {}

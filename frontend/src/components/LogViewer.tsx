@@ -25,6 +25,7 @@ interface LogViewerProps {
   onLineClick?: (index: number) => void;
   onAddLayer?: (type: LayerType, config?: any) => void;
   onVisibleRangeChange?: (startIndex: number, endIndex: number) => void;
+  onToggleBookmark?: (lineIndex: number) => void;
   updateTrigger?: number; // 外部触发器，用于强制刷新缓存
 }
 
@@ -38,6 +39,7 @@ export const LogViewer: React.FC<LogViewerProps> = ({
   onLineClick,
   onAddLayer,
   onVisibleRangeChange,
+  onToggleBookmark,
   updateTrigger
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -296,9 +298,16 @@ export const LogViewer: React.FC<LogViewerProps> = ({
                   ${isHighlighted ? 'bg-blue-500/20' : ''}`}
                 style={{ height: '20px', minHeight: '20px', maxHeight: '20px' }}
               >
-                {/* 行号栏：显示虚拟行号和物理行号 (#) */}
-                <div className={`w-20 text-right pr-4 shrink-0 select-none text-[10px] flex flex-col justify-center items-end leading-[9px] ${isHighlighted ? 'text-blue-400 font-semibold' : 'text-gray-600'}`}>
-                  <span>{(absoluteIdx + 1).toLocaleString()}</span>
+                {/* 行号栏：显示虚拟行号和物理行号，点击切换书签 */}
+                <div
+                  onClick={(e) => { e.stopPropagation(); onToggleBookmark?.(originalIndex); }}
+                  className={`w-20 text-right pr-4 shrink-0 select-none text-[10px] flex flex-col justify-center items-end leading-[9px] cursor-pointer hover:bg-white/5 transition-colors ${isHighlighted ? 'text-blue-400 font-semibold' : 'text-gray-600'}`}
+                  title="点击切换书签"
+                >
+                  <span className="flex items-center gap-1">
+                    {isMarked && <span className="text-amber-400 text-[11px]">●</span>}
+                    {(absoluteIdx + 1).toLocaleString()}
+                  </span>
                   <span className={`text-[8px] mt-0.5 font-normal tracking-tighter opacity-0 group-hover:opacity-40 ${isHighlighted ? 'opacity-40' : ''} transition-opacity duration-300`}>
                     #{(originalIndex + 1).toLocaleString()}
                   </span>

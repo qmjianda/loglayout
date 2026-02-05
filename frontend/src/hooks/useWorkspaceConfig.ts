@@ -154,10 +154,15 @@ export function useWorkspaceConfig({
     // Auto-load when workspace changes
     useEffect(() => {
         if (workspaceRoot?.path) {
-            // Only load if explicit workspace change or we have no files open
-            if (files.length === 0) {
-                loadConfig();
-            }
+            // Always reload config when workspace changes (user explicitly switched folders)
+            loadConfig().then(success => {
+                if (!success) {
+                    // No config found, clear current session
+                    setFiles([]);
+                    setActiveFileId(null);
+                    console.log('[WorkspaceConfig] No config found for new workspace, cleared session');
+                }
+            });
         }
     }, [workspaceRoot?.path]); // Only triggers on root change
 

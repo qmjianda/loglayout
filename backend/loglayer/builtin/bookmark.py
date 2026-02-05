@@ -10,6 +10,7 @@ class BookmarkLayer(RenderingLayer):
     display_name = "书签图层"
     description = "为特定行添加书签标记"
     icon = "bookmark"
+    is_system_managed = True  # 系统托管，不在图层列表显示
     
     inputs = [
         ColorInput("color", "书签颜色", value="#f59e0b"),

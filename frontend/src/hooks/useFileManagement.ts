@@ -7,7 +7,7 @@
 
 import React, { useState, useCallback, useMemo, useRef } from 'react';
 import { LogLayer, LayerType } from '../types';
-import { openFile, closeFile, selectFiles, selectFolder, listLogsInFolder } from '../bridge_client';
+import { openFile, closeFile, selectFiles, selectFolder, hasNativeDialogs, listLogsInFolder } from '../bridge_client';
 import { basename, removeFromSet, addToSet } from '../utils';
 
 // File data interface - exported for use in other modules
@@ -235,9 +235,18 @@ export function useFileManagement(): UseFileManagementReturn {
     }, [addNewFiles]);
 
     // Native folder selection
+    // 返回 null 时表示需要使用远程路径选择器（--no-ui 模式）
     const handleNativeFolderSelect = useCallback(async (): Promise<{ path: string; name: string } | null> => {
         try {
             if (!window.fileBridge) return null;
+
+            // 检测是否支持原生对话框
+            const hasDialogs = await hasNativeDialogs();
+            if (!hasDialogs) {
+                // 返回 null 触发远程路径选择器
+                return null;
+            }
+
             const folderPath = await selectFolder();
             if (!folderPath) return null;
 

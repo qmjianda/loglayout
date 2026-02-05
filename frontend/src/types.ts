@@ -51,6 +51,7 @@ export interface LogLayer {
   enabled: boolean;
   isLocked?: boolean;
   isCollapsed?: boolean;
+  isSystemManaged?: boolean;  // 系统托管图层，默认隐藏
   groupId?: string;
   config: LayerConfig;
 }
