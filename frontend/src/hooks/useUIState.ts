@@ -14,6 +14,9 @@ export interface UseUIStateProps {
     redo: () => void;
     setSearchQuery: (query: string) => void;
     searchQuery: string;
+    // 书签导航回调
+    onNavigateToNextBookmark?: () => void;
+    onNavigateToPrevBookmark?: () => void;
 }
 
 export interface UseUIStateReturn {
@@ -60,7 +63,9 @@ export function useUIState({
     undo,
     redo,
     setSearchQuery,
-    searchQuery
+    searchQuery,
+    onNavigateToNextBookmark,
+    onNavigateToPrevBookmark
 }: UseUIStateProps): UseUIStateReturn {
     // View state
     const [activeView, setActiveView] = useState<ActiveView>('main');
@@ -114,6 +119,14 @@ export function useUIState({
             } else if (isCmdOrCtrl && isG) {
                 e.preventDefault();
                 setIsGoToLineVisible(true);
+            } else if (e.key === 'F2') {
+                // F2: Navigate to next/prev bookmark
+                e.preventDefault();
+                if (isShift) {
+                    onNavigateToPrevBookmark?.();
+                } else {
+                    onNavigateToNextBookmark?.();
+                }
             } else if (e.key === 'Escape') {
                 if (isFindVisible) setIsFindVisible(false);
                 if (isGoToLineVisible) setIsGoToLineVisible(false);
@@ -122,7 +135,7 @@ export function useUIState({
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [undo, redo, isFindVisible, isGoToLineVisible, setSearchQuery]);
+    }, [undo, redo, isFindVisible, isGoToLineVisible, setSearchQuery, onNavigateToNextBookmark, onNavigateToPrevBookmark]);
 
     // Jump to line
     const handleJumpToLine = useCallback((index: number, totalLines: number) => {

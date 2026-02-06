@@ -20,7 +20,7 @@ import { StatusBar } from './components/StatusBar';
 import { IndexingOverlay, FileLoadingSkeleton, PendingFilesWall } from './components/LoadingOverlays';
 import { RemotePathPicker } from './components/RemotePathPicker';
 import { LayerType } from './types';
-import { openFile, syncAll, hasNativeDialogs, toggleBookmark } from './bridge_client';
+import { openFile, syncAll, hasNativeDialogs, toggleBookmark, getNearestBookmarkIndex } from './bridge_client';
 import { removeFromSet, basename } from './utils';
 
 // 导入自定义 Hooks
@@ -122,6 +122,7 @@ const App: React.FC = () => {
 
   // ===== UI 状态控制 (UI State) =====
   // 处理各种面板显隐、滚动定位、进度条、工作区根目录等。
+  // Note: 书签导航将在 uiState 返回后定义，使用 useEffect 注册
   const uiState = useUIState({
     undo,
     redo,
@@ -153,6 +154,33 @@ const App: React.FC = () => {
     handleJumpToLine
   } = uiState;
 
+  // ===== 书签导航 (Bookmark Navigation) =====
+  // F2/Shift+F2 快捷键跳转到上/下一个书签
+  useEffect(() => {
+    const handleF2 = async (e: KeyboardEvent) => {
+      if (e.key !== 'F2') return;
+      e.preventDefault();
+
+      if (!activeFileId) return;
+      const currentIdx = highlightedIndex ?? 0;
+      const direction = e.shiftKey ? 'prev' : 'next';
+
+      try {
+        const targetIdx = await getNearestBookmarkIndex(activeFileId, currentIdx, direction);
+        if (targetIdx >= 0) {
+          setScrollToIndex(targetIdx);
+          setHighlightedIndex(targetIdx);
+          setTimeout(() => setScrollToIndex(null), 150);
+        }
+      } catch (err) {
+        console.error('[Bookmark] Navigation failed:', err);
+      }
+    };
+
+    window.addEventListener('keydown', handleF2);
+    return () => window.removeEventListener('keydown', handleF2);
+  }, [activeFileId, highlightedIndex, setScrollToIndex, setHighlightedIndex]);
+
   // ===== 搜索功能逻辑 (Search Logic Hook) =====
   const search = useSearch({
     activeFileId,
@@ -180,6 +208,9 @@ const App: React.FC = () => {
   } = search;
 
   const [isLayerProcessing, setIsLayerProcessing] = React.useState(false);
+
+  // 书签刷新触发器（每次书签变化时递增，用于触发 UnifiedPanel 刷新书签列表）
+  const [bookmarkTrigger, setBookmarkTrigger] = React.useState(0);
 
   // ===== 工作区持久化 (Workspace Config Persistence) =====
   // 自动将当前打开的文件和图层配置保存到本地磁盘（.loglayer 目录）。
@@ -535,6 +566,7 @@ const App: React.FC = () => {
               canRedo={canRedo}
               onUndo={undo}
               onRedo={redo}
+              bookmarkRefreshTrigger={bookmarkTrigger}
             />
           )}
 
@@ -647,6 +679,7 @@ const App: React.FC = () => {
                                   if (pane.fileId) {
                                     await toggleBookmark(pane.fileId, lineIndex);
                                     triggerUpdate();
+                                    setBookmarkTrigger(prev => prev + 1); // 触发书签列表即时刷新
                                   }
                                 }}
                                 updateTrigger={bridgedUpdateTrigger}

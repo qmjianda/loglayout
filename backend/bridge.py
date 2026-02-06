@@ -736,6 +736,30 @@ class FileBridge:
             print(f"Session error for {file_id}: {e}")
             return "[]"
 
+    def get_lines_by_indices(self, file_id: str, indices: list) -> str:
+        """获取指定索引的行内容（纯文本）"""
+        if file_id not in self._sessions: return "[]"
+        session = self._sessions[file_id]
+        try:
+            if session.mmap is None: return "[]"
+            results = []
+            offsets = session.line_offsets
+            
+            for idx in indices[:100]:  # 限制最多100行
+                try:
+                    if idx < 0 or idx >= len(offsets): continue
+                    start_off = offsets[idx]
+                    end_off = offsets[idx + 1] if idx + 1 < len(offsets) else session.size
+                    chunk = session.mmap[start_off:end_off]
+                    if len(chunk) > 200: chunk = chunk[:200]  # 截断为200字符
+                    content = chunk.decode('utf-8', errors='replace').replace('\r', '').replace('\n', '').strip()
+                    results.append({"index": idx, "text": content})
+                except (IndexError, ValueError): continue
+            return json.dumps(results)
+        except (ValueError, RuntimeError) as e:
+            print(f"get_lines_by_indices error for {file_id}: {e}")
+            return "[]"
+
     def ready(self):
         self.frontendReady.emit()
 
@@ -909,16 +933,86 @@ class FileBridge:
         
         if not bookmarks:
             return -1
-        
+            
+        # 1. 将输入的虚拟索引转换为物理索引
+        current_physical = current_index
+        if session.visible_indices is not None:
+            if len(session.visible_indices) > 0:
+                if current_index >= 0 and current_index < len(session.visible_indices):
+                    current_physical = session.visible_indices[current_index]
+                elif current_index >= len(session.visible_indices):
+                    current_physical = session.visible_indices[-1] + 1
+                else:
+                    current_physical = 0
+            # 如果 visible_indices 为空但非 None（全过滤），保持 current_physical = current_index 可能会有问题，但通常不会发生交互
+            
         import bisect
         
+        target_physical = -1
         if direction == 'next':
-            idx = bisect.bisect_right(bookmarks, current_index)
+            idx = bisect.bisect_right(bookmarks, current_physical)
             if idx < len(bookmarks):
-                return bookmarks[idx]
-            return bookmarks[0]  # 循环到开头
+                target_physical = bookmarks[idx]
+            else:
+                target_physical = bookmarks[0]  # 循环到开头
         else:  # prev
-            idx = bisect.bisect_left(bookmarks, current_index) - 1
+            idx = bisect.bisect_left(bookmarks, current_physical) - 1
             if idx >= 0:
-                return bookmarks[idx]
-            return bookmarks[-1]  # 循环到末尾
+                target_physical = bookmarks[idx]
+            else:
+                target_physical = bookmarks[-1]  # 循环到末尾
+                
+        if target_physical == -1:
+            return -1
+            
+        # 2. 将目标物理索引转换回虚拟索引返回
+        return self.physical_to_visual_index(file_id, target_physical)
+
+    def clear_bookmarks(self, file_id: str) -> str:
+        """清除指定文件的所有书签"""
+        if file_id not in self._sessions:
+            return "[]"
+        
+        session = self._sessions[file_id]
+        
+        for layer in session.rendering_instances:
+            if layer.__class__.__name__ == 'BookmarkLayer':
+                layer.bookmarks.clear()
+                # 更新配置
+                for l_conf in session.layers:
+                    if l_conf.get('id') == layer.id:
+                        l_conf['config']['bookmarks'] = []
+                        break
+                break
+        
+        # 清除缓存并刷新
+        session.cache.clear()
+        indices_len = len(session.visible_indices) if session.visible_indices is not None else len(session.line_offsets)
+        matches_len = len(session.search_matches) if session.search_matches is not None else 0
+        self.pipelineFinished.emit(file_id, indices_len, matches_len)
+        
+        return "[]"
+
+    def physical_to_visual_index(self, file_id: str, physical_index: int) -> int:
+        """将物理行索引转换为虚拟行索引（考虑过滤后的可见行）"""
+        if file_id not in self._sessions:
+            return physical_index
+        
+        session = self._sessions[file_id]
+        
+        # 如果没有过滤（visible_indices 为 None），物理索引 = 虚拟索引
+        if session.visible_indices is None:
+            return physical_index
+        
+        # 在 visible_indices 中二分查找物理索引对应的虚拟索引
+        import bisect
+        visual_idx = bisect.bisect_left(session.visible_indices, physical_index)
+        
+        # 检查是否找到完全匹配
+        if visual_idx < len(session.visible_indices) and session.visible_indices[visual_idx] == physical_index:
+            return visual_idx
+        
+        # 如果物理行被过滤掉了，返回最近的可见行
+        if visual_idx > 0:
+            return visual_idx - 1
+        return 0

@@ -142,6 +142,11 @@ def read_processed_lines(file_id: str, start_line: int, count: int):
     # Returns raw string from bridge, FastAPI will wrap it in JSON correctly
     return json.loads(bridge.read_processed_lines(file_id, start_line, count))
 
+@app.post("/api/get_lines_by_indices")
+def get_lines_by_indices(data: dict = Body(...)):
+    """获取指定索引的行内容"""
+    return json.loads(bridge.get_lines_by_indices(data['file_id'], data['indices']))
+
 @app.get("/api/get_search_match_index")
 def get_search_match_index(file_id: str, rank: int):
     return bridge.get_search_match_index(file_id, rank)
@@ -225,6 +230,16 @@ def get_bookmarks(file_id: str):
 def get_nearest_bookmark_index(file_id: str, current_index: int, direction: str):
     """查找最近的书签索引"""
     return bridge.get_nearest_bookmark_index(file_id, current_index, direction)
+
+@app.post("/api/clear_bookmarks")
+def clear_bookmarks(data: dict = Body(...)):
+    """清除指定文件的所有书签"""
+    return json.loads(bridge.clear_bookmarks(data['file_id']))
+
+@app.get("/api/physical_to_visual_index")
+def physical_to_visual_index(file_id: str, physical_index: int):
+    """将物理行索引转换为虚拟行索引"""
+    return bridge.physical_to_visual_index(file_id, physical_index)
 
 
 # Serve Frontend

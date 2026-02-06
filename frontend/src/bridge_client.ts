@@ -131,6 +131,15 @@ class WebBridge implements FileBridgeAPI {
     async get_nearest_bookmark_index(fileId: string, currentIndex: number, direction: string) {
         return this.get('get_nearest_bookmark_index', { file_id: fileId, current_index: currentIndex, direction });
     }
+    async clear_bookmarks(fileId: string) {
+        return this.post('clear_bookmarks', { file_id: fileId });
+    }
+    async get_lines_by_indices(fileId: string, indices: number[]) {
+        return this.post('get_lines_by_indices', { file_id: fileId, indices });
+    }
+    async physical_to_visual_index(fileId: string, physicalIndex: number) {
+        return this.get('physical_to_visual_index', { file_id: fileId, physical_index: physicalIndex });
+    }
 }
 
 /**
@@ -326,5 +335,47 @@ export async function getNearestBookmarkIndex(fileId: string, currentIndex: numb
     } catch (e) {
         console.error('[Bridge] getNearestBookmarkIndex error:', e);
         return -1;
+    }
+}
+
+/**
+ * 清除指定文件的所有书签
+ */
+export async function clearBookmarks(fileId: string): Promise<number[]> {
+    if (!fileBridge) return [];
+    try {
+        const res = await (fileBridge as any).clear_bookmarks(fileId);
+        return typeof res === 'string' ? JSON.parse(res) : res;
+    } catch (e) {
+        console.error('[Bridge] clearBookmarks error:', e);
+        return [];
+    }
+}
+
+/**
+ * 获取指定索引的行内容（纯文本）
+ */
+export async function getLinesByIndices(fileId: string, indices: number[]): Promise<{ index: number; text: string }[]> {
+    if (!fileBridge) return [];
+    try {
+        const res = await (fileBridge as any).get_lines_by_indices(fileId, indices);
+        return typeof res === 'string' ? JSON.parse(res) : res;
+    } catch (e) {
+        console.error('[Bridge] getLinesByIndices error:', e);
+        return [];
+    }
+}
+
+/**
+ * 将物理行索引转换为虚拟行索引
+ */
+export async function physicalToVisualIndex(fileId: string, physicalIndex: number): Promise<number> {
+    if (!fileBridge) return physicalIndex;
+    try {
+        const res = await (fileBridge as any).physical_to_visual_index(fileId, physicalIndex);
+        return typeof res === 'number' ? res : physicalIndex;
+    } catch (e) {
+        console.error('[Bridge] physicalToVisualIndex error:', e);
+        return physicalIndex;
     }
 }

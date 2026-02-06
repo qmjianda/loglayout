@@ -3,6 +3,7 @@ import { LogLayer, LayerType, LayerPreset, LayerRegistryEntry } from '../types';
 import { LayersPanel } from './LayersPanel';
 import { FileTree } from './FileTree';
 import { useLayerRegistry } from '../hooks/useLayerRegistry';
+import { getBookmarks, clearBookmarks, getLinesByIndices, physicalToVisualIndex } from '../bridge_client';
 
 // 文件信息接口
 export interface FileInfo {
@@ -50,6 +51,9 @@ interface UnifiedPanelProps {
     canRedo: boolean;
     onUndo: () => void;
     onRedo: () => void;
+
+    // 书签刷新触发器（每次书签变化时递增）
+    bookmarkRefreshTrigger?: number;
 }
 
 // 简化后的 Section ID
@@ -81,7 +85,8 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
     canUndo,
     canRedo,
     onUndo,
-    onRedo
+    onRedo,
+    bookmarkRefreshTrigger = 0
 }) => {
     const [collapsedSections, setCollapsedSections] = useState<Record<SectionId, boolean>>({
         openFiles: false,
@@ -102,6 +107,36 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
 
     // Debug: show system-managed layers
     const [showSystemLayers, setShowSystemLayers] = useState(false);
+
+    // Bookmarks state for each file
+    const [bookmarksMap, setBookmarksMap] = useState<Record<string, number[]>>({});
+    // Bookmark line content previews: { fileId: { lineIdx: "line content preview..." } }
+    const [bookmarkPreviewsMap, setBookmarkPreviewsMap] = useState<Record<string, Record<number, string>>>({});
+
+    // Fetch bookmarks for active file (triggered by activeFileId or bookmarkRefreshTrigger)
+    useEffect(() => {
+        if (!activeFileId) return;
+        const fetchBookmarksWithPreviews = async () => {
+            try {
+                const bookmarks = await getBookmarks(activeFileId);
+                setBookmarksMap(prev => ({ ...prev, [activeFileId]: bookmarks }));
+
+                // 获取书签行的内容预览
+                if (bookmarks.length > 0) {
+                    const lines = await getLinesByIndices(activeFileId, bookmarks.slice(0, 50));
+                    const previews: Record<number, string> = {};
+                    lines.forEach(line => {
+                        // 截断为60字符
+                        previews[line.index] = line.text.length > 60 ? line.text.slice(0, 60) + '...' : line.text;
+                    });
+                    setBookmarkPreviewsMap(prev => ({ ...prev, [activeFileId]: previews }));
+                }
+            } catch (e) {
+                console.error('[Bookmarks] Failed to fetch:', e);
+            }
+        };
+        fetchBookmarksWithPreviews();
+    }, [activeFileId, bookmarkRefreshTrigger]);
 
     // Click outside to close menu
     useEffect(() => {
@@ -381,6 +416,45 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
                                                         点击上方 + 图标添加图层进行分析
                                                     </div>
                                                 )}
+
+                                                {/* Bookmarks Section */}
+                                                {isActive && bookmarksMap[file.id]?.length > 0 && (
+                                                    <div className="mt-1 border-t border-[#333] pt-1">
+                                                        <div className="px-2 py-1 flex items-center gap-1">
+                                                            <svg className="w-3 h-3 text-amber-400" fill="currentColor" viewBox="0 0 20 20"><path d="M5 4a2 2 0 012-2h6a2 2 0 012 2v14l-5-2.5L5 18V4z" /></svg>
+                                                            <span className="text-[9px] uppercase font-bold text-gray-500">书签</span>
+                                                            <span className="text-[9px] text-gray-600">{bookmarksMap[file.id].length}</span>
+                                                            <button
+                                                                onClick={async (e) => {
+                                                                    e.stopPropagation();
+                                                                    if (confirm(`确定要清除全部 ${bookmarksMap[file.id].length} 个书签吗？`)) {
+                                                                        await clearBookmarks(file.id);
+                                                                        setBookmarksMap(prev => ({ ...prev, [file.id]: [] }));
+                                                                    }
+                                                                }}
+                                                                className="ml-auto px-1.5 py-0.5 text-[9px] bg-red-500/20 text-red-400 hover:bg-red-500/40 rounded transition-colors"
+                                                                title="清除所有书签"
+                                                            >
+                                                                清除
+                                                            </button>
+                                                        </div>
+                                                        <div className="flex flex-wrap gap-1 px-2 pb-1 max-h-24 overflow-y-auto custom-scrollbar">
+                                                            {bookmarksMap[file.id].map(lineIdx => (
+                                                                <button
+                                                                    key={lineIdx}
+                                                                    onClick={async () => {
+                                                                        const visualIdx = await physicalToVisualIndex(file.id, lineIdx);
+                                                                        onJumpToLine(visualIdx);
+                                                                    }}
+                                                                    className="px-1.5 py-0.5 text-[10px] bg-amber-500/20 text-amber-400 hover:bg-amber-500/40 rounded transition-colors"
+                                                                    title={bookmarkPreviewsMap[file.id]?.[lineIdx] || `行 ${lineIdx + 1}`}
+                                                                >
+                                                                    {lineIdx + 1}
+                                                                </button>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
                                             </div>
                                         )}
                                     </div>
@@ -429,8 +503,8 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
                     <svg className={`w-3 h-3 mr-2 transition-transform ${collapsedSections.explorer ? '' : 'rotate-90'}`} fill="currentColor" viewBox="0 0 20 20">
                         <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
                     </svg>
-                    <span className="text-[10px] uppercase font-black tracking-wider opacity-60">资源管理器</span>
-                    {workspaceRoot && <span className="ml-2 text-[10px] text-blue-400 font-medium truncate shrink">{workspaceRoot.name}</span>}
+                    <span className="text-[10px] uppercase font-black tracking-wider opacity-60 whitespace-nowrap">资源管理器</span>
+                    {workspaceRoot && <span className="ml-2 text-[10px] text-blue-400 font-medium truncate shrink whitespace-nowrap">{workspaceRoot.name}</span>}
                 </div>
 
                 {!collapsedSections.explorer && (
