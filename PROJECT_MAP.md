@@ -62,6 +62,12 @@ graph TD
         - 提取 `SearchMixin` (`backend/search_mixin.py`)，将搜索、书签和索引转换逻辑从主 `FileBridge` 类中剥离。
         - 增强 `main.py` 异常捕获和端口冲突提示，默认端口保持 12345 但支持灵活调整。
     - **Bug Fix**: 修复了 `useDrag` Hook 的累加计算错误以及由此导致的面板抖动问题。
+- **Automated Testing Enhancement (Phase 6)**:
+    - **Testing Framework**: 引入 `pytest` 替换零散测试脚本，提供更标准的基础设施 (`conftest.py`)。
+    - **Unit Testing**: 为 `SearchMixin` 增加了高覆盖率的单元测试，涵盖索引转换与搜索 rank 计算逻辑。
+    - **Integration Testing**: 基于 `FastAPI TestClient` 实现了接口自动化测试。
+    - **Automation Tool**: 新增 `tools/run_tests.py` 一键执行全量测试套件。
+
 
 ## 6. Change Log (2026-02-05)
 - **Unified Opening Flow**: 整合“打开文件”与“打开项目”为统一的“浏览并打开 (Open)”入口。
