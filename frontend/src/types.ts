@@ -73,6 +73,7 @@ export interface LogLine {
   displayContent?: string;
   highlights?: Array<{ start: number; end: number; color: string; opacity: number; isSearch?: boolean }>;
   isMarked?: boolean;
+  bookmarkComment?: string;
 }
 
 export interface ProcessedCache {
@@ -93,6 +94,12 @@ export interface FileBridgeAPI {
   save_workspace_config(folderPath: string, configJson: string): Promise<boolean>;
   load_workspace_config(folderPath: string): Promise<string>;
   ready(): Promise<void>;
+
+  // Bookmark operations
+  toggle_bookmark(fileId: string, lineIndex: number): Promise<Record<number, string>>;
+  get_bookmarks(fileId: string): Promise<Record<number, string>>;
+  clear_bookmarks(fileId: string): Promise<Record<number, string>>;
+  update_bookmark_comment(fileId: string, lineIndex: number, comment: string): Promise<Record<number, string>>;
 
   // Pipeline operations
   sync_layers(fileId: string, layersJson: string): Promise<boolean>;

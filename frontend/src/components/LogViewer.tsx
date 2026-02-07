@@ -1,6 +1,7 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { LogLine, LayerType } from '../types';
 import { readProcessedLines } from '../bridge_client';
+import { BookmarkPopover } from './BookmarkPopover';
 
 /**
  * LogViewer - 核心日志渲染组件
@@ -26,6 +27,7 @@ interface LogViewerProps {
   onAddLayer?: (type: LayerType, config?: any) => void;
   onVisibleRangeChange?: (startIndex: number, endIndex: number) => void;
   onToggleBookmark?: (lineIndex: number) => void;
+  onUpdateBookmarkComment?: (lineIndex: number, comment: string) => void;
   updateTrigger?: number; // 外部触发器，用于强制刷新缓存
 }
 
@@ -40,12 +42,14 @@ export const LogViewer: React.FC<LogViewerProps> = ({
   onAddLayer,
   onVisibleRangeChange,
   onToggleBookmark,
+  onUpdateBookmarkComment,
   updateTrigger
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, text: string, lineIndex?: number } | null>(null);
+  const [commentPopover, setCommentPopover] = useState<{ x: number, y: number, lineIndex: number, comment: string } | null>(null);
 
   // 本地缓存：存储从后端读取的行数据
   const [bridgedLines, setBridgedLines] = useState<Map<number, LogLine | string>>(new Map());
@@ -235,6 +239,13 @@ export const LogViewer: React.FC<LogViewerProps> = ({
     return () => window.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  const handleUpdateComment = async (lineIndex: number, comment: string) => {
+    if (onUpdateBookmarkComment) {
+      await onUpdateBookmarkComment(lineIndex, comment);
+    }
+    setCommentPopover(null);
+  };
+
   // 通知父组件当前的可见范围（可用于同步统计等）
   useEffect(() => {
     onVisibleRangeChange?.(startIndex, endIndex);
@@ -328,15 +339,51 @@ export const LogViewer: React.FC<LogViewerProps> = ({
                   ${isHighlighted ? 'bg-blue-500/20' : ''}`}
                 style={{ height: '20px', minHeight: '20px', maxHeight: '20px' }}
               >
-                {/* 行号栏：显示虚拟行号和物理行号，点击切换书签 */}
+                {/* 行号栏：显示虚拟行号和物理行号 */}
                 <div
-                  onClick={(e) => { e.stopPropagation(); onToggleBookmark?.(originalIndex); }}
-                  className={`w-20 text-right pr-4 shrink-0 select-none text-[10px] flex flex-col justify-center items-end leading-[9px] cursor-pointer hover:bg-white/5 transition-colors ${isHighlighted ? 'text-blue-400 font-semibold' : 'text-gray-600'}`}
-                  title="点击切换书签"
+                  className={`w-20 text-right pr-4 shrink-0 select-none text-[10px] flex flex-col justify-center items-end leading-[9px] ${isHighlighted ? 'text-blue-400 font-semibold' : 'text-gray-600'}`}
                 >
-                  <span className="flex items-center gap-1">
-                    {isMarked && <span className="text-amber-400 text-[11px]">●</span>}
-                    {(absoluteIdx + 1).toLocaleString()}
+                  <span className="flex items-center gap-1 group/gutter min-w-[32px] justify-end">
+                    {!isMarked && (
+                      <span
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onToggleBookmark?.(originalIndex);
+                        }}
+                        className="text-gray-500/0 group-hover/gutter:text-gray-500/40 text-[11px] cursor-pointer transition-all hover:scale-125 select-none pr-1"
+                        title="点击添加书签"
+                      >
+                        ●
+                      </span>
+                    )}
+                    {isMarked && (
+                      <span
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          setCommentPopover({
+                            x: rect.right + 10,
+                            y: rect.top,
+                            lineIndex: originalIndex,
+                            comment: (line as LogLine).bookmarkComment || ''
+                          });
+                        }}
+                        className={`text-amber-400 text-[11px] cursor-help hover:scale-125 transition-transform ${(line as LogLine).bookmarkComment ? 'drop-shadow-[0_0_3px_rgba(251,191,36,0.8)]' : 'opacity-60'} pr-1`}
+                        title={(line as LogLine).bookmarkComment || "添加备注..."}
+                      >
+                        {(line as LogLine).bookmarkComment ? '★' : '●'}
+                      </span>
+                    )}
+                    <span
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onToggleBookmark?.(originalIndex);
+                      }}
+                      className="cursor-pointer hover:text-white transition-colors py-1"
+                      title="点击切换书签"
+                    >
+                      {(absoluteIdx + 1).toLocaleString()}
+                    </span>
                   </span>
                   <span className={`text-[8px] mt-0.5 font-normal tracking-tighter opacity-0 group-hover:opacity-40 ${isHighlighted ? 'opacity-40' : ''} transition-opacity duration-300`}>
                     #{(originalIndex + 1).toLocaleString()}
@@ -350,63 +397,83 @@ export const LogViewer: React.FC<LogViewerProps> = ({
       </div>
 
       {/* 自定义右键菜单 */}
-      {contextMenu && (
-        <div
-          style={{ position: 'fixed', top: contextMenu.y, left: contextMenu.x, zIndex: 1000 }}
-          className="context-menu-popup bg-[#252526] border border-[#454545] shadow-2xl rounded py-1 min-w-[160px] flex flex-col ring-1 ring-black/50 animate-in fade-in zoom-in-95 duration-100"
-          onMouseDown={e => e.stopPropagation()}
-        >
-          {contextMenu.text && (
-            <>
-              <div className="px-3 py-1 text-[9px] uppercase font-bold text-gray-500 border-b border-[#333] mb-1">选中文本: "{contextMenu.text.length > 15 ? contextMenu.text.substring(0, 15) + '...' : contextMenu.text}"</div>
-              <button
-                onClick={() => { onAddLayer?.(LayerType.FILTER, { query: contextMenu.text }); setContextMenu(null); }}
-                className="px-3 py-1.5 hover:bg-blue-600 text-gray-200 hover:text-white text-xs flex justify-between items-center transition-colors"
-              >
-                <span>以此过滤</span>
-                <span className="opacity-40 text-[10px]">Filter</span>
-              </button>
-              <button
-                onClick={() => { onAddLayer?.(LayerType.HIGHLIGHT, { query: contextMenu.text, color: '#facc15' }); setContextMenu(null); }}
-                className="px-3 py-1.5 hover:bg-blue-600 text-gray-200 hover:text-white text-xs flex justify-between items-center transition-colors"
-              >
-                <span>以此高亮</span>
-                <span className="opacity-40 text-[10px]">Highlight</span>
-              </button>
-              <button
-                onClick={() => handleCopy(contextMenu.text)}
-                className="px-3 py-1.5 hover:bg-blue-600 text-gray-200 hover:text-white text-xs flex justify-between items-center transition-colors"
-              >
-                <span>复制选中内容</span>
-                <span className="opacity-40 text-[10px]">Copy</span>
-              </button>
-              <div className="h-[1px] bg-[#333] my-1" />
-            </>
-          )}
+      {
+        contextMenu && (
+          <div
+            style={{ position: 'fixed', top: contextMenu.y, left: contextMenu.x, zIndex: 1000 }}
+            className="context-menu-popup bg-[#252526] border border-[#454545] shadow-2xl rounded py-1 min-w-[160px] flex flex-col ring-1 ring-black/50 animate-in fade-in zoom-in-95 duration-100"
+            onMouseDown={e => e.stopPropagation()}
+          >
+            {contextMenu.text && (
+              <>
+                <div className="px-3 py-1 text-[9px] uppercase font-bold text-gray-500 border-b border-[#333] mb-1">选中文本: "{contextMenu.text.length > 15 ? contextMenu.text.substring(0, 15) + '...' : contextMenu.text}"</div>
+                <button
+                  onClick={() => { onAddLayer?.(LayerType.FILTER, { query: contextMenu.text }); setContextMenu(null); }}
+                  className="px-3 py-1.5 hover:bg-blue-600 text-gray-200 hover:text-white text-xs flex justify-between items-center transition-colors"
+                >
+                  <span>以此过滤</span>
+                  <span className="opacity-40 text-[10px]">Filter</span>
+                </button>
+                <button
+                  onClick={() => { onAddLayer?.(LayerType.HIGHLIGHT, { query: contextMenu.text, color: '#facc15' }); setContextMenu(null); }}
+                  className="px-3 py-1.5 hover:bg-blue-600 text-gray-200 hover:text-white text-xs flex justify-between items-center transition-colors"
+                >
+                  <span>以此高亮</span>
+                  <span className="opacity-40 text-[10px]">Highlight</span>
+                </button>
+                <button
+                  onClick={() => handleCopy(contextMenu.text)}
+                  className="px-3 py-1.5 hover:bg-blue-600 text-gray-200 hover:text-white text-xs flex justify-between items-center transition-colors"
+                >
+                  <span>复制选中内容</span>
+                  <span className="opacity-40 text-[10px]">Copy</span>
+                </button>
+                <div className="h-[1px] bg-[#333] my-1" />
+              </>
+            )}
 
-          {contextMenu.lineIndex !== undefined && (
+            {contextMenu.lineIndex !== undefined && (
+              <button
+                onClick={() => { onToggleBookmark?.(contextMenu.lineIndex!); setContextMenu(null); }}
+                className="px-3 py-1.5 hover:bg-blue-600 text-gray-200 hover:text-white text-xs flex justify-between items-center transition-colors"
+              >
+                <span>{bridgedLines.get(startIndex + (contextMenu.lineIndex - (bridgedLines.get(contextMenu.lineIndex) as LogLine)?.index || 0)) ? '切换书签' : '切换书签'}</span>
+                <span className="opacity-40 text-[10px]">F2</span>
+              </button>
+            )}
+
             <button
-              onClick={() => { onToggleBookmark?.(contextMenu.lineIndex!); setContextMenu(null); }}
+              onClick={() => {
+                const line = bridgedLines.get(startIndex + (visibleLines.findIndex(l => (l as LogLine)?.index === contextMenu.lineIndex)));
+                const content = typeof line === 'string' ? line : (line as LogLine)?.content || '';
+                handleCopy(content);
+              }}
               className="px-3 py-1.5 hover:bg-blue-600 text-gray-200 hover:text-white text-xs flex justify-between items-center transition-colors"
             >
-              <span>{bridgedLines.get(startIndex + (contextMenu.lineIndex - (bridgedLines.get(contextMenu.lineIndex) as LogLine)?.index || 0)) ? '切换书签' : '切换书签'}</span>
-              <span className="opacity-40 text-[10px]">F2</span>
+              <span>复制整行</span>
+              <span className="opacity-40 text-[10px]">Copy Line</span>
             </button>
-          )}
+          </div>
+        )
+      }
 
-          <button
-            onClick={() => {
-              const line = bridgedLines.get(startIndex + (visibleLines.findIndex(l => (l as LogLine)?.index === contextMenu.lineIndex)));
-              const content = typeof line === 'string' ? line : (line as LogLine)?.content || '';
-              handleCopy(content);
+      {/* 书签注释 Popover */}
+      {
+        commentPopover && (
+          <BookmarkPopover
+            x={commentPopover.x}
+            y={commentPopover.y}
+            lineIndex={commentPopover.lineIndex}
+            initialComment={commentPopover.comment}
+            onSave={(c) => handleUpdateComment(commentPopover.lineIndex, c)}
+            onRemove={() => {
+              onToggleBookmark?.(commentPopover.lineIndex);
+              setCommentPopover(null);
             }}
-            className="px-3 py-1.5 hover:bg-blue-600 text-gray-200 hover:text-white text-xs flex justify-between items-center transition-colors"
-          >
-            <span>复制整行</span>
-            <span className="opacity-40 text-[10px]">Copy Line</span>
-          </button>
-        </div>
-      )}
-    </div>
+            onClose={() => setCommentPopover(null)}
+          />
+        )
+      }
+    </div >
   );
 };

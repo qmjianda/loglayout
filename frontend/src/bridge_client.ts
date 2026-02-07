@@ -137,6 +137,9 @@ class WebBridge implements FileBridgeAPI {
     async get_lines_by_indices(fileId: string, indices: number[]) {
         return this.post('get_lines_by_indices', { file_id: fileId, indices });
     }
+    async update_bookmark_comment(fileId: string, lineIndex: number, comment: string) {
+        return this.post('update_bookmark_comment', { file_id: fileId, line_index: lineIndex, comment: comment });
+    }
     async physical_to_visual_index(fileId: string, physicalIndex: number) {
         return this.get('physical_to_visual_index', { file_id: fileId, physical_index: physicalIndex });
     }
@@ -298,30 +301,30 @@ export async function loadWorkspaceConfig(folderPath: string): Promise<Workspace
 
 /**
  * 切换指定行的书签状态
- * @returns 更新后的书签行号列表
+ * @returns 更新后的书签对象 {lineIndex: comment}
  */
-export async function toggleBookmark(fileId: string, lineIndex: number): Promise<number[]> {
-    if (!fileBridge) return [];
+export async function toggleBookmark(fileId: string, lineIndex: number): Promise<Record<number, string>> {
+    if (!fileBridge) return {};
     try {
         const res = await (fileBridge as any).toggle_bookmark(fileId, lineIndex);
         return typeof res === 'string' ? JSON.parse(res) : res;
     } catch (e) {
         console.error('[Bridge] toggleBookmark error:', e);
-        return [];
+        return {};
     }
 }
 
 /**
  * 获取当前文件的书签列表
  */
-export async function getBookmarks(fileId: string): Promise<number[]> {
-    if (!fileBridge) return [];
+export async function getBookmarks(fileId: string): Promise<Record<number, string>> {
+    if (!fileBridge) return {};
     try {
         const res = await (fileBridge as any).get_bookmarks(fileId);
         return typeof res === 'string' ? JSON.parse(res) : res;
     } catch (e) {
         console.error('[Bridge] getBookmarks error:', e);
-        return [];
+        return {};
     }
 }
 
@@ -341,14 +344,29 @@ export async function getNearestBookmarkIndex(fileId: string, currentIndex: numb
 /**
  * 清除指定文件的所有书签
  */
-export async function clearBookmarks(fileId: string): Promise<number[]> {
-    if (!fileBridge) return [];
+export async function clearBookmarks(fileId: string): Promise<Record<number, string>> {
+    if (!fileBridge) return {};
     try {
         const res = await (fileBridge as any).clear_bookmarks(fileId);
         return typeof res === 'string' ? JSON.parse(res) : res;
     } catch (e) {
         console.error('[Bridge] clearBookmarks error:', e);
-        return [];
+        return {};
+    }
+}
+
+/**
+ * 更新书签注释
+ */
+export async function updateBookmarkComment(fileId: string, lineIndex: number, comment: string): Promise<Record<number, string>> {
+    const bridge = await ensureBridge();
+    if (!bridge) return {};
+    try {
+        const res = await (bridge as any).update_bookmark_comment(fileId, lineIndex, comment);
+        return typeof res === 'string' ? JSON.parse(res) : res;
+    } catch (e) {
+        console.error('[Bridge] updateBookmarkComment error:', e);
+        return {};
     }
 }
 

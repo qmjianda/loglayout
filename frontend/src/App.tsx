@@ -37,6 +37,7 @@ import { useFileManagement } from './hooks/useFileManagement';
 import { useLayerManagement } from './hooks/useLayerManagement';
 import { useSearchLogic } from './hooks/useSearchLogic';
 import { useBookmarkLogic } from './hooks/useBookmarkLogic';
+import { useBookmarks } from './hooks/useBookmarks';
 
 
 const App: React.FC = () => {
@@ -187,7 +188,18 @@ const App: React.FC = () => {
     handleJumpToLine
   } = uiState;
 
-  // ===== 书签导航 (Bookmark Navigation) =====
+  // ===== 书签数据管理 (Bookmarks Data Management) =====
+  // 集中管理当前文件的书签状态、备注和预览
+  const {
+    bookmarks,
+    previews: bookmarkPreviews,
+    toggle: handleToggleBookmark,
+    updateComment: handleUpdateBookmarkComment,
+    clear: handleClearBookmarks,
+    jumpTo: handleJumpToBookmark
+  } = useBookmarks(activeFileId);
+
+  // ===== 书签快捷键导航 (Bookmark Shortcuts) =====
   useBookmarkLogic({
     activeFileId,
     highlightedIndex,
@@ -195,45 +207,7 @@ const App: React.FC = () => {
     setScrollToIndex
   });
   // F2/Shift+F2 快捷键跳转到上/下一个书签
-  // const scrollTimeoutRef = useRef<number | null>(null);
-  // useEffect(() => {
-  //   const handleF2 = async (e: KeyboardEvent) => {
-  //     if (e.key !== 'F2') return;
-  //     e.preventDefault();
-
-  //     if (!activeFileId) return;
-  //     const currentIdx = highlightedIndex ?? 0;
-  //     const direction = e.shiftKey ? 'prev' : 'next';
-
-  //     try {
-  //       const targetIdx = await getNearestBookmarkIndex(activeFileId, currentIdx, direction);
-  //       if (targetIdx >= 0) {
-  //         // 清除之前的 timeout，防止快速连续按键时的竞态条件
-  //         if (scrollTimeoutRef.current) {
-  //           clearTimeout(scrollTimeoutRef.current);
-  //         }
-  //         setScrollToIndex(targetIdx);
-  //         setHighlightedIndex(targetIdx);
-  //         scrollTimeoutRef.current = window.setTimeout(() => setScrollToIndex(null), 150);
-  //       }
-  //     } catch (err) {
-  //       console.error('[Bookmark] Navigation failed:', err);
-  //     }
-  //   };
-
-  //   window.addEventListener('keydown', handleF2);
-  //   return () => {
-  //     window.removeEventListener('keydown', handleF2);
-  //     if (scrollTimeoutRef.current) {
-  //       clearTimeout(scrollTimeoutRef.current);
-  //     }
-  //   };
-  // }, [activeFileId, highlightedIndex, setScrollToIndex, setHighlightedIndex]);
-
   const [isLayerProcessing, setIsLayerProcessing] = React.useState(false);
-
-  // 书签刷新触发器（每次书签变化时递增，用于触发 UnifiedPanel 刷新书签列表）
-  const [bookmarkTrigger, setBookmarkTrigger] = React.useState(0);
 
   // ===== 工作区持久化 (Workspace Config Persistence) =====
   // 自动将当前打开的文件和图层配置保存到本地磁盘（.loglayer 目录）。
@@ -589,7 +563,12 @@ const App: React.FC = () => {
               canRedo={canRedo}
               onUndo={undo}
               onRedo={redo}
-              bookmarkRefreshTrigger={bookmarkTrigger}
+              bookmarkRefreshTrigger={0} // Legacy, not used with useBookmarks hook
+              bookmarks={bookmarks}
+              bookmarkPreviews={bookmarkPreviews}
+              onToggleBookmark={handleToggleBookmark}
+              onClearBookmarks={handleClearBookmarks}
+              onJumpToBookmark={(idx) => handleJumpToBookmark(idx, (visualIdx) => handleJumpToLine(visualIdx, activeFile?.lineCount || 0))}
             />
           )}
 
@@ -698,13 +677,8 @@ const App: React.FC = () => {
                                   setHighlightedIndex(idx);
                                 }}
                                 onAddLayer={(type, config) => addLayer(type, config)}
-                                onToggleBookmark={async (lineIndex) => {
-                                  if (pane.fileId) {
-                                    await toggleBookmark(pane.fileId, lineIndex);
-                                    triggerUpdate();
-                                    setBookmarkTrigger(prev => prev + 1); // 触发书签列表即时刷新
-                                  }
-                                }}
+                                onToggleBookmark={handleToggleBookmark}
+                                onUpdateBookmarkComment={handleUpdateBookmarkComment}
                                 updateTrigger={bridgedUpdateTrigger}
                               />
                             )}

@@ -426,8 +426,11 @@ class FileBridge(SearchMixin):
     workspaceOpened = Signal(str)
     
     def __init__(self):
+        super().__init__()
         self._sessions = {}
+        self._registry = LayerRegistry()
         self._rg_path = self._get_rg_path()
+        self.executor = ThreadPoolExecutor(max_workers=4)
         self._zombie_workers = []
         self._zombie_cleanup_counter = 0  # 清理计数器
         plugin_dir = os.path.join(os.getcwd(), "backend", "plugins")
@@ -685,8 +688,11 @@ class FileBridge(SearchMixin):
                     if row_style:
                         line_data["rowStyle"] = row_style
                         # 提升 isBookmarked 到根属性 isMarked
-                        if row_style.get('isBookmarked'):
+                        # 提升 isMarked 到根属性
+                        if row_style.get('isMarked') or row_style.get('isBookmarked'):
                             line_data["isMarked"] = True
+                            if 'bookmarkComment' in row_style:
+                                line_data["bookmarkComment"] = row_style['bookmarkComment']
                     if len(session.cache) < 5000: session.cache[i] = line_data
                     results.append(line_data)
                 except (IndexError, ValueError): continue
@@ -694,6 +700,29 @@ class FileBridge(SearchMixin):
         except (ValueError, RuntimeError) as e:
             print(f"Session error for {file_id}: {e}")
             return "[]"
+
+    def list_directory(self, folder_path: str) -> str:
+        return json.dumps(get_directory_contents(folder_path))
+
+    def save_workspace_config(self, folder_path: str, config_json: str) -> bool:
+        try:
+            config_dir = Path(folder_path) / ".loglayer"
+            config_dir.mkdir(parents=True, exist_ok=True)
+            config_file = config_dir / "config.json"
+            with open(config_file, 'w', encoding='utf-8') as f: f.write(config_json)
+            return True
+        except Exception as e:
+            print(f"[Workspace] Error saving config: {e}")
+            return False
+
+    def load_workspace_config(self, folder_path: str) -> str:
+        try:
+            config_file = Path(folder_path) / ".loglayer" / "config.json"
+            if not config_file.exists(): return ""
+            with open(config_file, 'r', encoding='utf-8') as f: return f.read()
+        except Exception as e:
+            print(f"[Workspace] Error loading config: {e}")
+            return ""
 
     def get_lines_by_indices(self, file_id: str, indices: list) -> str:
         """获取指定索引的行内容（纯文本）"""
@@ -784,27 +813,7 @@ class FileBridge(SearchMixin):
     def list_logs_in_folder(self, folder_path: str) -> str:
         return json.dumps(get_log_files_recursive(folder_path))
 
-    def list_directory(self, folder_path: str) -> str:
-        return json.dumps(get_directory_contents(folder_path))
-
-    def save_workspace_config(self, folder_path: str, config_json: str) -> bool:
-        try:
-            config_dir = Path(folder_path) / ".loglayer"
-            config_dir.mkdir(parents=True, exist_ok=True)
-            config_file = config_dir / "config.json"
-            with open(config_file, 'w', encoding='utf-8') as f: f.write(config_json)
-            return True
-        except Exception as e:
-            print(f"[Workspace] Error saving config: {e}")
-            return False
-
-    def load_workspace_config(self, folder_path: str) -> str:
-        try:
-            config_file = Path(folder_path) / ".loglayer" / "config.json"
-            if not config_file.exists(): return ""
-            with open(config_file, 'r', encoding='utf-8') as f: return f.read()
-        except Exception as e:
-            print(f"[Workspace] Error loading config: {e}")
-            return ""
-
-    # Bookmark and Physical/Visual index methods have been moved to SearchMixin
+    # SearchMixin provides:
+    # get_search_match_index, get_nearest_search_rank, get_search_matches_range,
+    # toggle_bookmark, get_bookmarks, get_nearest_bookmark_index, clear_bookmarks,
+    # physical_to_visual_index, update_bookmark_comment

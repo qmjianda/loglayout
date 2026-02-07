@@ -38,7 +38,14 @@ interface UnifiedPanelProps {
     onLayerToggle: (id: string) => void;
     onLayerUpdate: (id: string, update: Partial<LogLayer>) => void;
     onAddLayer: (type: LayerType) => void;
-    onJumpToLine: (index: number) => void;
+    onJumpToLine: (lineIndex: number) => void;
+
+    // 书签相关
+    bookmarks?: Record<number, string>;
+    bookmarkPreviews?: Record<number, string>;
+    onToggleBookmark?: (lineIndex: number) => void;
+    onClearBookmarks?: () => void;
+    onJumpToBookmark?: (lineIndex: number) => void;
 
     // 预设相关
     presets: LayerPreset[];
@@ -78,6 +85,11 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
     onLayerUpdate,
     onAddLayer,
     onJumpToLine,
+    bookmarks = {},
+    bookmarkPreviews = {},
+    onToggleBookmark,
+    onClearBookmarks,
+    onJumpToBookmark,
     presets,
     onPresetApply,
     onPresetDelete,
@@ -108,36 +120,6 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
 
     // Debug: show system-managed layers
     const [showSystemLayers, setShowSystemLayers] = useState(false);
-
-    // Bookmarks state for each file
-    const [bookmarksMap, setBookmarksMap] = useState<Record<string, number[]>>({});
-    // Bookmark line content previews: { fileId: { lineIdx: "line content preview..." } }
-    const [bookmarkPreviewsMap, setBookmarkPreviewsMap] = useState<Record<string, Record<number, string>>>({});
-
-    // Fetch bookmarks for active file (triggered by activeFileId or bookmarkRefreshTrigger)
-    useEffect(() => {
-        if (!activeFileId) return;
-        const fetchBookmarksWithPreviews = async () => {
-            try {
-                const bookmarks = await getBookmarks(activeFileId);
-                setBookmarksMap(prev => ({ ...prev, [activeFileId]: bookmarks }));
-
-                // 获取书签行的内容预览
-                if (bookmarks.length > 0) {
-                    const lines = await getLinesByIndices(activeFileId, bookmarks.slice(0, 50));
-                    const previews: Record<number, string> = {};
-                    lines.forEach(line => {
-                        // 截断为60字符
-                        previews[line.index] = line.text.length > 60 ? line.text.slice(0, 60) + '...' : line.text;
-                    });
-                    setBookmarkPreviewsMap(prev => ({ ...prev, [activeFileId]: previews }));
-                }
-            } catch (e) {
-                console.error('[Bookmarks] Failed to fetch:', e);
-            }
-        };
-        fetchBookmarksWithPreviews();
-    }, [activeFileId, bookmarkRefreshTrigger]);
 
     // Click outside to close menu
     useEffect(() => {
@@ -443,40 +425,70 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
                                                 )}
 
                                                 {/* Bookmarks Section */}
-                                                {isActive && bookmarksMap[file.id]?.length > 0 && (
+                                                {isActive && (
                                                     <div className="mt-1 border-t border-[#333] pt-1">
-                                                        <div className="px-2 py-1 flex items-center gap-1">
-                                                            <svg className="w-3 h-3 text-amber-400" fill="currentColor" viewBox="0 0 20 20"><path d="M5 4a2 2 0 012-2h6a2 2 0 012 2v14l-5-2.5L5 18V4z" /></svg>
-                                                            <span className="text-[9px] uppercase font-bold text-gray-500">书签</span>
-                                                            <span className="text-[9px] text-gray-600">{bookmarksMap[file.id].length}</span>
-                                                            <button
-                                                                onClick={async (e) => {
-                                                                    e.stopPropagation();
-                                                                    if (confirm(`确定要清除全部 ${bookmarksMap[file.id].length} 个书签吗？`)) {
-                                                                        await clearBookmarks(file.id);
-                                                                        setBookmarksMap(prev => ({ ...prev, [file.id]: [] }));
-                                                                    }
-                                                                }}
-                                                                className="ml-auto px-1.5 py-0.5 text-[9px] bg-red-500/20 text-red-400 hover:bg-red-500/40 rounded transition-colors"
-                                                                title="清除所有书签"
-                                                            >
-                                                                清除
-                                                            </button>
-                                                        </div>
-                                                        <div className="flex flex-wrap gap-1 px-2 pb-1 max-h-24 overflow-y-auto custom-scrollbar">
-                                                            {bookmarksMap[file.id].map(lineIdx => (
+                                                        {/* 书签列表区域 */}
+                                                        <div className="flex items-center justify-between px-3 py-1 bg-[#2d2d2d]/50">
+                                                            <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">该文件的书签 ({Object.keys(bookmarks).length})</span>
+                                                            {Object.keys(bookmarks).length > 0 && (
                                                                 <button
-                                                                    key={lineIdx}
-                                                                    onClick={async () => {
-                                                                        const visualIdx = await physicalToVisualIndex(file.id, lineIdx);
-                                                                        onJumpToLine(visualIdx);
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        onClearBookmarks?.();
                                                                     }}
-                                                                    className="px-1.5 py-0.5 text-[10px] bg-amber-500/20 text-amber-400 hover:bg-amber-500/40 rounded transition-colors"
-                                                                    title={bookmarkPreviewsMap[file.id]?.[lineIdx] || `行 ${lineIdx + 1}`}
+                                                                    className="text-[9px] text-gray-500 hover:text-red-400 transition-colors"
                                                                 >
-                                                                    {lineIdx + 1}
+                                                                    清除全部
                                                                 </button>
-                                                            ))}
+                                                            )}
+                                                        </div>
+                                                        <div className="flex flex-col">
+                                                            {Object.keys(bookmarks).length === 0 ? (
+                                                                <div className="px-3 py-4 text-center">
+                                                                    <p className="text-[10px] text-gray-600 italic">暂无书签。点击行号区域可添加。</p>
+                                                                </div>
+                                                            ) : (
+                                                                Object.entries(bookmarks).sort(([a], [b]) => Number(a) - Number(b)).map(([lineIdx, comment]) => {
+                                                                    const idx = Number(lineIdx);
+                                                                    const preview = bookmarkPreviews[idx];
+                                                                    return (
+                                                                        <div
+                                                                            key={idx}
+                                                                            className="group flex flex-col px-3 py-2 hover:bg-white/5 cursor-pointer border-l-2 border-transparent hover:border-amber-500 transition-all"
+                                                                            onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                onJumpToBookmark?.(idx);
+                                                                            }}
+                                                                        >
+                                                                            <div className="flex items-center justify-between mb-1">
+                                                                                <div className="flex items-center gap-2">
+                                                                                    <span className="text-amber-500 text-[10px] font-mono">#{(idx + 1).toLocaleString()}</span>
+                                                                                    {comment && (
+                                                                                        <span className="text-[10px] text-gray-300 truncate max-w-[140px] font-medium">{comment}</span>
+                                                                                    )}
+                                                                                </div>
+                                                                                <button
+                                                                                    onClick={(e) => {
+                                                                                        e.stopPropagation();
+                                                                                        onToggleBookmark?.(idx);
+                                                                                    }}
+                                                                                    className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-red-400 transition-all p-1"
+                                                                                    title="删除书签"
+                                                                                >
+                                                                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                                                                </button>
+                                                                            </div>
+                                                                            {preview ? (
+                                                                                <div className="text-[10px] text-gray-500 font-mono truncate bg-black/20 rounded px-1.5 py-0.5 border border-white/5 italic">
+                                                                                    {preview}
+                                                                                </div>
+                                                                            ) : (
+                                                                                <div className="text-[9px] text-gray-700 italic">正在加载预览...</div>
+                                                                            )}
+                                                                        </div>
+                                                                    );
+                                                                })
+                                                            )}
                                                         </div>
                                                     </div>
                                                 )}

@@ -56,149 +56,91 @@ class SearchMixin:
         if start >= end: return "[]"
         return json.dumps(session.search_matches[start:end].tolist())
 
-    def toggle_bookmark(self, file_id: str, line_index: int) -> str:
-        """
-        切换指定行的书签状态。
-        如果没有书签图层，自动创建一个。
-        返回当前书签列表的 JSON。
-        """
-        if file_id not in self._sessions:
-            return "[]"
-        
-        session = self._sessions[file_id]
-        
-        # 查找现有的书签图层
-        bookmark_layer = None
+    def _get_bookmark_layer(self, session):
+        """Find the BookmarkLayer instance in a session."""
         for layer in session.rendering_instances:
             if layer.__class__.__name__ == 'BookmarkLayer':
-                bookmark_layer = layer
-                break
-        
-        # 如果没有书签图层，创建一个
-        if bookmark_layer is None:
-            bookmark_layer = self._registry.create_layer_instance('BOOKMARK', {'color': '#f59e0b', 'bookmarks': []})
-            if bookmark_layer:
-                bookmark_layer.id = f"system-bookmark-{file_id}"
-                session.rendering_instances.append(bookmark_layer)
-                # 同步到 layers 配置
+                return layer
+        return None
+
+    def _ensure_bookmark_layer(self, session, file_id: str):
+        """Ensure a BookmarkLayer exists for the session."""
+        layer = self._get_bookmark_layer(session)
+        if layer is None:
+            # Create a new system-managed bookmark layer
+            layer = self._registry.create_layer_instance('BOOKMARK', {'color': '#f59e0b', 'bookmarks': {}})
+            if layer:
+                layer.id = f"system-bookmark-{file_id}"
+                session.rendering_instances.append(layer)
+                # Sync to session configuration for persistence
                 session.layers.append({
-                    'id': bookmark_layer.id,
+                    'id': layer.id,
                     'type': 'BOOKMARK',
                     'name': '书签',
                     'enabled': True,
                     'isSystemManaged': True,
-                    'config': {'color': '#f59e0b', 'bookmarks': []}
+                    'config': {'color': '#f59e0b', 'bookmarks': {}}
                 })
-        
-        if bookmark_layer is None:
-            return "[]"
-        
-        # 切换书签
-        if line_index in bookmark_layer.bookmarks:
-            bookmark_layer.bookmarks.remove(line_index)
-        else:
-            bookmark_layer.bookmarks.add(line_index)
-        
-        # 更新配置中的书签列表
+        return layer
+
+    def _sync_bookmark_config_and_refresh(self, session, layer, file_id):
+        """Synchronize layer state to session config and trigger a refresh."""
         for l_conf in session.layers:
-            if l_conf.get('id') == bookmark_layer.id:
-                l_conf['config']['bookmarks'] = list(bookmark_layer.bookmarks)
+            if l_conf.get('id') == layer.id:
+                l_conf['config']['bookmarks'] = layer.bookmarks
                 break
         
-        # 清除缓存并刷新
         session.cache.clear()
         indices_len = len(session.visible_indices) if session.visible_indices is not None else len(session.line_offsets)
         matches_len = len(session.search_matches) if session.search_matches is not None else 0
         self.pipelineFinished.emit(file_id, indices_len, matches_len)
+
+    def toggle_bookmark(self, file_id: str, line_index: int) -> str:
+        if file_id not in self._sessions: return "{}"
+        session = self._sessions[file_id]
+        layer = self._ensure_bookmark_layer(session, file_id)
+        if not layer: return "{}"
         
-        return json.dumps(sorted(list(bookmark_layer.bookmarks)))
+        layer.toggle(line_index)
+        self._sync_bookmark_config_and_refresh(session, layer, file_id)
+        return json.dumps(layer.bookmarks)
 
     def get_bookmarks(self, file_id: str) -> str:
-        """返回当前文件的书签列表 JSON"""
-        if file_id not in self._sessions:
-            return "[]"
-        
+        if file_id not in self._sessions: return "{}"
         session = self._sessions[file_id]
-        
-        for layer in session.rendering_instances:
-            if layer.__class__.__name__ == 'BookmarkLayer':
-                return json.dumps(sorted(list(layer.bookmarks)))
-        
-        return "[]"
+        layer = self._get_bookmark_layer(session)
+        return json.dumps(layer.bookmarks if layer else {})
+
+    def update_bookmark_comment(self, file_id: str, line_index: int, comment: str) -> str:
+        if file_id not in self._sessions: return "{}"
+        session = self._sessions[file_id]
+        layer = self._get_bookmark_layer(session)
+        if layer:
+            layer.set_comment(line_index, comment)
+            self._sync_bookmark_config_and_refresh(session, layer, file_id)
+        return json.dumps(layer.bookmarks if layer else {})
 
     def get_nearest_bookmark_index(self, file_id: str, current_index: int, direction: str) -> int:
-        """查找最近的书签索引"""
-        if file_id not in self._sessions:
-            return -1
-        
+        if file_id not in self._sessions: return -1
         session = self._sessions[file_id]
-        bookmarks = []
+        layer = self._get_bookmark_layer(session)
+        if not layer: return -1
         
-        for layer in session.rendering_instances:
-            if layer.__class__.__name__ == 'BookmarkLayer':
-                bookmarks = sorted(list(layer.bookmarks))
-                break
-        
-        if not bookmarks:
-            return -1
-            
-        # 1. 将输入的虚拟索引转换为物理索引
-        current_physical = current_index
-        if session.visible_indices is not None:
-            # 如果 visible_indices 为空（全过滤），没有可见行可以导航
-            if len(session.visible_indices) == 0:
-                return -1
-            if current_index >= 0 and current_index < len(session.visible_indices):
-                current_physical = session.visible_indices[current_index]
-            elif current_index >= len(session.visible_indices):
-                current_physical = session.visible_indices[-1] + 1
-            else:
-                current_physical = 0
-        
-        target_physical = -1
-        if direction == 'next':
-            idx = bisect.bisect_right(bookmarks, current_physical)
-            if idx < len(bookmarks):
-                target_physical = bookmarks[idx]
-            else:
-                target_physical = bookmarks[0]  # 循环到开头
-        else:  # prev
-            idx = bisect.bisect_left(bookmarks, current_physical) - 1
-            if idx >= 0:
-                target_physical = bookmarks[idx]
-            else:
-                target_physical = bookmarks[-1]  # 循环到末尾
-                
-        if target_physical == -1:
-            return -1
-            
-        # 2. 将目标物理索引转换回虚拟索引返回
-        return self.physical_to_visual_index(file_id, target_physical)
+        return layer.get_nearest_index(
+            current_index, 
+            direction, 
+            session.visible_indices, 
+            lambda pi: self.physical_to_visual_index(file_id, pi)
+        )
 
     def clear_bookmarks(self, file_id: str) -> str:
-        """清除指定文件的所有书签"""
-        if file_id not in self._sessions:
-            return "[]"
-        
+        if file_id not in self._sessions: return "{}"
         session = self._sessions[file_id]
-        
-        for layer in session.rendering_instances:
-            if layer.__class__.__name__ == 'BookmarkLayer':
-                layer.bookmarks.clear()
-                # 更新配置
-                for l_conf in session.layers:
-                    if l_conf.get('id') == layer.id:
-                        l_conf['config']['bookmarks'] = []
-                        break
-                break
-        
-        # 清除缓存并刷新
-        session.cache.clear()
-        indices_len = len(session.visible_indices) if session.visible_indices is not None else len(session.line_offsets)
-        matches_len = len(session.search_matches) if session.search_matches is not None else 0
-        self.pipelineFinished.emit(file_id, indices_len, matches_len)
-        
-        return "[]"
+        layer = self._get_bookmark_layer(session)
+        if layer:
+            layer.clear_all()
+            self._sync_bookmark_config_and_refresh(session, layer, file_id)
+        return "{}"
 
     def physical_to_visual_index(self, file_id: str, physical_index: int) -> int:
         """将物理行索引转换为虚拟行索引（考虑过滤后的可见行）"""
