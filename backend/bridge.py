@@ -515,6 +515,15 @@ class FileBridge(SearchMixin):
         """Legacy API - delegates to sync_layers for backward compatibility"""
         return self.sync_layers(file_id, layers_json, search_json)
 
+    def _merge_system_layers(self, session, new_layers: list) -> list:
+        """保持 session 中既有的系统托管图层（如书签）不被前端同步覆盖"""
+        system_layers = [l for l in session.layers if l.get('isSystemManaged')]
+        incoming_ids = {l.get('id') for l in new_layers}
+        for sl in system_layers:
+            if sl.get('id') not in incoming_ids:
+                new_layers.append(sl)
+        return new_layers
+
     def sync_layers(self, file_id: str, layers_json: str, search_json: str) -> bool:
         """
         同步处理层配置。
@@ -523,7 +532,8 @@ class FileBridge(SearchMixin):
         if file_id not in self._sessions: return False
         session = self._sessions[file_id]
         try:
-            session.layers = json.loads(layers_json)
+            incoming = json.loads(layers_json)
+            session.layers = self._merge_system_layers(session, incoming)
             session.search_config = json.loads(search_json) if search_json else None
             
             # 分离处理层和渲染层实例
@@ -559,7 +569,8 @@ class FileBridge(SearchMixin):
         if file_id not in self._sessions: return False
         session = self._sessions[file_id]
         try:
-            session.layers = json.loads(layers_json)
+            incoming = json.loads(layers_json)
+            session.layers = self._merge_system_layers(session, incoming)
             
             # 只更新渲染层实例
             session.rendering_instances = []
