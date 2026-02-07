@@ -54,6 +54,14 @@ graph TD
     - **Refactoring**: 提取 `useDrag` Hook，消除 `UnifiedPanel.tsx` 中的重复拖拽逻辑。
     - **Maintainability**: 将 `PipelineWorker` 进程清理超时提取为 `PROCESS_CLEANUP_TIMEOUT` 常量。
 - **Documentation**: 更新 `DESIGN.md` 以反映从 PyQt6 到 FastAPI 的架构迁移。
+- **Performance & Architecture Optimization (Phase 5)**:
+    - **Frontend Refactoring**: 
+        - 提取 `useSearchLogic` 和 `useBookmarkLogic` Hooks，将 `App.tsx` 中的重度业务逻辑解耦。
+        - 优化 `LogViewer` 行缓存策略，采用基于距离的淘汰算法，将淘汰效率从 `O(N log N)` 提升至 `O(N)`。
+    - **Backend Refactoring**: 
+        - 提取 `SearchMixin` (`backend/search_mixin.py`)，将搜索、书签和索引转换逻辑从主 `FileBridge` 类中剥离。
+        - 增强 `main.py` 异常捕获和端口冲突提示，默认端口保持 12345 但支持灵活调整。
+    - **Bug Fix**: 修复了 `useDrag` Hook 的累加计算错误以及由此导致的面板抖动问题。
 
 ## 6. Change Log (2026-02-05)
 - **Unified Opening Flow**: 整合“打开文件”与“打开项目”为统一的“浏览并打开 (Open)”入口。
