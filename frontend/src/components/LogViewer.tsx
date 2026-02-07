@@ -61,11 +61,17 @@ export const LogViewer: React.FC<LogViewerProps> = ({
   const scaleFactor = useScrollScaling ? VIRTUAL_HEIGHT_LIMIT / realTotalHeight : 1;
   const virtualTotalHeight = useScrollScaling ? VIRTUAL_HEIGHT_LIMIT : realTotalHeight;
 
-  // 当外部触发器改变（如清空搜索、切换图层）时，清空本地缓存
+  // 当文件 id 变化时（切换文件），彻底清空缓存，防止显示上一个文件的内容
   useEffect(() => {
     setBridgedLines(new Map());
     lastFetchRef.current = { start: -1, end: -1 };
-  }, [updateTrigger, fileId]);
+  }, [fileId]);
+
+  // 当外部触发器改变（如清空搜索、切换图层、刷新）时，保留本地缓存（stale-while-revalidate），
+  // 仅重置抓取状态以强制重新获取最新数据。这样可以避免数据到达前的白屏闪烁。
+  useEffect(() => {
+    lastFetchRef.current = { start: -1, end: -1 };
+  }, [updateTrigger]);
 
   // 计算可见范围（考虑缩放模式）
   const maxPhysicalScroll = virtualTotalHeight - viewportHeight;

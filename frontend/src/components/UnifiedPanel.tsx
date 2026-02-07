@@ -157,7 +157,9 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
     const prevActiveFileIdRef = useRef<string | null>(null);
     useEffect(() => {
         if (activeFileId && activeFileId !== prevActiveFileIdRef.current) {
-            setExpandedFiles(prev => ({ ...prev, [activeFileId]: true }));
+            // Strict auto-expand active, collapse others
+            // We use a completely new object with only the active file as true, effectively collapsing all others
+            setExpandedFiles({ [activeFileId]: true });
         }
         prevActiveFileIdRef.current = activeFileId;
     }, [activeFileId]);
@@ -326,12 +328,15 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
                                         <div
                                             className={`flex items-center py-1 px-2 cursor-pointer select-none group transition-colors relative ${isActive ? 'bg-[#37373d] text-blue-400' : 'hover:bg-[#2a2d2e] text-gray-400'}`}
                                             onClick={() => {
+                                                if (file.id === activeFileId) {
+                                                    // Toggle ONLY if already active (manual collapse/expand)
+                                                    // Switching files is handled by useEffect
+                                                    setExpandedFiles(prev => {
+                                                        const currentlyExpanded = prev[file.id] === true;
+                                                        return { ...prev, [file.id]: !currentlyExpanded };
+                                                    });
+                                                }
                                                 onFileActivate(file.id);
-                                                // Toggle expand: if undefined (default expanded) or true → false, if false → true
-                                                setExpandedFiles(prev => {
-                                                    const currentlyExpanded = prev[file.id] === true;
-                                                    return { ...prev, [file.id]: !currentlyExpanded };
-                                                });
                                             }}
                                         >
                                             {/* Expand/Collapse Arrow - Visual indicator only */}
