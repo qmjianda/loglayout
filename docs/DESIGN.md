@@ -6,18 +6,19 @@
 LogLayer 采用 **前后端分离 (Frontend-Backend Separation)** 的桌面应用架构。
 
 *   **前端 (Frontend)**: 使用 React + TypeScript + Vite 构建。负责 UI 展示、用户交互、图层配置。
-*   **后端 (Backend)**: 使用 Python + PyQt6 构建。负责文件 I/O、核心日志处理算法、插件系统、以及与操作系统的交互。
-*   **通信桥梁 (The Bridge)**: 前后端通过 `QWebChannel` (基于 WebSocket) 进行通信。
+*   **后端 (Backend)**: 使用 Python + FastAPI + pywebview 构建。负责文件 I/O、核心日志处理算法、插件系统、以及与操作系统的交互。
+*   **通信桥梁 (The Bridge)**: 前后端通过 `WebSocket` (实时信号) + `HTTP REST API` (大数据传输) 进行通信。
 
 ### 架构图
 ```mermaid
 graph TD
     User[用户 User] --> Frontend[React 前端]
-    Frontend -- JSON指令 --> Bridge[Python Bridge (PyQt)]
-    Bridge --> Worker[后台工作线程 Worker]
+    Frontend -- HTTP/WS --> Backend[FastAPI Backend]
+    Backend --> Window[pywebview Window]
+    Backend --> Worker[后台工作线程 Worker]
     Worker --> FileSystem[文件系统]
-    Worker -- 处理结果 --> Bridge
-    Bridge -- 事件/数据 --> Frontend
+    Worker -- 处理结果 --> Backend
+    Backend -- 信号/数据 --> Frontend
 ```
 
 ## 2. 核心概念：图层 pipeline (Layer Pipeline)

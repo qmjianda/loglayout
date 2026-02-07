@@ -45,7 +45,7 @@ export const LogViewer: React.FC<LogViewerProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
-  const [contextMenu, setContextMenu] = useState<{ x: number, y: number, text: string } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number, y: number, text: string, lineIndex?: number } | null>(null);
 
   // 本地缓存：存储从后端读取的行数据
   const [bridgedLines, setBridgedLines] = useState<Map<number, LogLine | string>>(new Map());
@@ -117,11 +117,28 @@ export const LogViewer: React.FC<LogViewerProps> = ({
             next.set(fetchStart + idx, line);
           });
 
-          // 缓存淘汰逻辑：当 Map 过大时，移除最早的 2000 行，保持性能
+          // 缓存淘汰逻辑：基于距离的淘汰 (Distance-based Eviction)
+          // 替换原有的 O(N log N) 排序策略，改为 O(N) 扫描，提升大文件滚动性能
           if (next.size > 5000) {
-            const keys = Array.from(next.keys()).sort((a, b) => Number(a) - Number(b));
-            const toRemove = keys.slice(0, 2000);
-            toRemove.forEach(k => next.delete(k));
+            const center = Math.floor((startIndex + endIndex) / 2);
+            const THRESHOLD = 3000; // 距离中心点多远会被移除
+
+            for (const key of next.keys()) {
+              if (Math.abs(Number(key) - center) > THRESHOLD) {
+                next.delete(key);
+              }
+            }
+
+            // 二次检查：如果仍然过多（比如跳跃滚动后），强制移除一部分
+            if (next.size > 5000) {
+              // 兜底策略：使用迭代器移除前 1000 个（Map 的迭代顺序通常是插入顺序，虽然不严格保证但足够快）
+              let removed = 0;
+              for (const key of next.keys()) {
+                next.delete(key);
+                removed++;
+                if (removed > 1000) break;
+              }
+            }
           }
 
           return next;

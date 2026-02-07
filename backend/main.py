@@ -250,7 +250,10 @@ if os.path.exists(www_dir):
     app.mount("/", StaticFiles(directory=www_dir, html=True), name="static")
 
 def run_server(port):
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+    try:
+        uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+    except BaseException as e:
+        print(f"[ServerThread] Error: {e}")
 
 def start_app():
     parser = argparse.ArgumentParser(description='LogLayer - Log file viewer')
@@ -307,9 +310,19 @@ def start_app():
         webview.start()
     else:
         try:
-            while True: time.sleep(1)
+            while True:
+                time.sleep(1)
         except KeyboardInterrupt:
+            # User interrupted
             pass
+        except BaseException as e:
+            if not isinstance(e, KeyboardInterrupt):
+                print(f"[Main] Error: {e}")
+                import traceback
+                traceback.print_exc()
 
 if __name__ == "__main__":
-    start_app()
+    try:
+        start_app()
+    except BaseException as e:
+        print(f"[Main] Fatal error: {e}")

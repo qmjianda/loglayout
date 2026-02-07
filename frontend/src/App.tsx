@@ -8,7 +8,7 @@
  * - useBridge: 处理前端与 Python 后端的信号监听与数据同步。
  */
 
-import React, { useMemo, useCallback, useEffect, useState } from 'react';
+import React, { useMemo, useCallback, useEffect, useState, useRef } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { LogViewer } from './components/LogViewer';
 import { SearchPanel } from './components/SearchPanel';
@@ -20,21 +20,23 @@ import { StatusBar } from './components/StatusBar';
 import { IndexingOverlay, FileLoadingSkeleton, PendingFilesWall } from './components/LoadingOverlays';
 import { RemotePathPicker } from './components/RemotePathPicker';
 import { LayerType } from './types';
-import { openFile, syncAll, hasNativeDialogs, toggleBookmark, getNearestBookmarkIndex } from './bridge_client';
+import { openFile, syncAll, hasNativeDialogs, toggleBookmark, getNearestBookmarkIndex, getLinesByIndices } from './bridge_client';
 import { removeFromSet, basename } from './utils';
+import { LogLine } from './types';
 
 // 导入自定义 Hooks
 import {
   useBridge,
-  useFileManagement,
-  useLayerManagement,
-  useSearch,
   useUIState,
   useWorkspaceConfig,
   useRemotePathPicker,
   setBridgedCount,
   FileLoadedInfo
 } from './hooks';
+import { useFileManagement } from './hooks/useFileManagement';
+import { useLayerManagement } from './hooks/useLayerManagement';
+import { useSearchLogic } from './hooks/useSearchLogic';
+import { useBookmarkLogic } from './hooks/useBookmarkLogic';
 
 
 const App: React.FC = () => {
@@ -112,13 +114,44 @@ const App: React.FC = () => {
 
   // ===== 搜索状态 (Search State) =====
   // 集中管理搜索相关的视图状态
-  const [searchQuery, setSearchQuery] = React.useState("");
-  const [searchConfig, setSearchConfig] = React.useState({
-    regex: false,
-    caseSensitive: false,
-    wholeWord: false
+  // searchMode 纯 UI 状态，保留在 App 中或移入 useSearchLogic (这里先保留在 Component 中，或者如果 useSearchLogic 支持则使用它)
+  // 检查 useSearchLogic 是否导出 searchMode? 暂时没有，所以保留本地 state 用于 Widget 显示控制
+  // 但注意 searchConfig.mode 已经在 useSearchLogic 中管理
+
+  // 修正：useSearchLogic 内部维护了 searchConfig.mode，我们应该使用它
+  // 如果 EditorFindWidget 需要独立的 'filter' | 'highlight' toggle，应该通过 setSearchConfig 更新
+
+  // UI 状态控制 (UI State)
+  // 处理各种面板显隐、滚动定位、进度条、工作区根目录等。
+  // Note: 书签导航将在 uiState 返回后定义，使用 useEffect 注册
+  // ===== 搜索功能逻辑 (Search Logic Hook) =====
+  // Must be called BEFORE useUIState because UI state depends on search methods
+  const search = useSearchLogic({
+    activeFileId,
+    layers,
+    layersFunctionalHash,
+    lineCount: activeFile?.lineCount || 0,
+    searchMatchCount,
+    setProcessedCache
   });
-  const [searchMode, setSearchMode] = React.useState<'highlight' | 'filter'>('highlight');
+
+  const {
+    searchQuery,
+    setSearchQuery,
+    searchConfig,
+    setSearchConfig,
+    currentMatchRank,
+    currentMatchIndex,
+    isSearching,
+    setIsSearching,
+    currentMatchNumber,
+    findNextSearchMatch,
+    clearSearch
+  } = search;
+
+  // Search Mode for UI Widget (Highlight vs Filter)
+  // This is purely UI state for the widget, though it might sync with searchConfig.mode later
+  const [searchMode, setSearchMode] = useState<'highlight' | 'filter'>('highlight');
 
   // ===== UI 状态控制 (UI State) =====
   // 处理各种面板显隐、滚动定位、进度条、工作区根目录等。
@@ -126,8 +159,8 @@ const App: React.FC = () => {
   const uiState = useUIState({
     undo,
     redo,
-    setSearchQuery,
-    searchQuery
+    setSearchQuery: (q: string) => search.setSearchQuery(q), // Connect to search logic
+    searchQuery: search.searchQuery // Connect to search logic
   });
 
   const {
@@ -155,57 +188,47 @@ const App: React.FC = () => {
   } = uiState;
 
   // ===== 书签导航 (Bookmark Navigation) =====
-  // F2/Shift+F2 快捷键跳转到上/下一个书签
-  useEffect(() => {
-    const handleF2 = async (e: KeyboardEvent) => {
-      if (e.key !== 'F2') return;
-      e.preventDefault();
-
-      if (!activeFileId) return;
-      const currentIdx = highlightedIndex ?? 0;
-      const direction = e.shiftKey ? 'prev' : 'next';
-
-      try {
-        const targetIdx = await getNearestBookmarkIndex(activeFileId, currentIdx, direction);
-        if (targetIdx >= 0) {
-          setScrollToIndex(targetIdx);
-          setHighlightedIndex(targetIdx);
-          setTimeout(() => setScrollToIndex(null), 150);
-        }
-      } catch (err) {
-        console.error('[Bookmark] Navigation failed:', err);
-      }
-    };
-
-    window.addEventListener('keydown', handleF2);
-    return () => window.removeEventListener('keydown', handleF2);
-  }, [activeFileId, highlightedIndex, setScrollToIndex, setHighlightedIndex]);
-
-  // ===== 搜索功能逻辑 (Search Logic Hook) =====
-  const search = useSearch({
+  useBookmarkLogic({
     activeFileId,
-    layers,
-    layersFunctionalHash,
-    lineCount: activeFile?.lineCount || 0,
-    searchMatchCount,
-    setProcessedCache,
-    searchQuery,
-    setSearchQuery,
-    searchConfig,
-    setSearchConfig
+    highlightedIndex,
+    setHighlightedIndex,
+    setScrollToIndex
   });
+  // F2/Shift+F2 快捷键跳转到上/下一个书签
+  // const scrollTimeoutRef = useRef<number | null>(null);
+  // useEffect(() => {
+  //   const handleF2 = async (e: KeyboardEvent) => {
+  //     if (e.key !== 'F2') return;
+  //     e.preventDefault();
 
-  const {
-    currentMatchRank,
-    setCurrentMatchRank,
-    currentMatchIndex,
-    isSearching,
-    setIsSearching,
-    searchMatchCount: searchMatchCountFromHook,
-    currentMatchNumber,
-    findNextSearchMatch,
-    clearSearch
-  } = search;
+  //     if (!activeFileId) return;
+  //     const currentIdx = highlightedIndex ?? 0;
+  //     const direction = e.shiftKey ? 'prev' : 'next';
+
+  //     try {
+  //       const targetIdx = await getNearestBookmarkIndex(activeFileId, currentIdx, direction);
+  //       if (targetIdx >= 0) {
+  //         // 清除之前的 timeout，防止快速连续按键时的竞态条件
+  //         if (scrollTimeoutRef.current) {
+  //           clearTimeout(scrollTimeoutRef.current);
+  //         }
+  //         setScrollToIndex(targetIdx);
+  //         setHighlightedIndex(targetIdx);
+  //         scrollTimeoutRef.current = window.setTimeout(() => setScrollToIndex(null), 150);
+  //       }
+  //     } catch (err) {
+  //       console.error('[Bookmark] Navigation failed:', err);
+  //     }
+  //   };
+
+  //   window.addEventListener('keydown', handleF2);
+  //   return () => {
+  //     window.removeEventListener('keydown', handleF2);
+  //     if (scrollTimeoutRef.current) {
+  //       clearTimeout(scrollTimeoutRef.current);
+  //     }
+  //   };
+  // }, [activeFileId, highlightedIndex, setScrollToIndex, setHighlightedIndex]);
 
   const [isLayerProcessing, setIsLayerProcessing] = React.useState(false);
 

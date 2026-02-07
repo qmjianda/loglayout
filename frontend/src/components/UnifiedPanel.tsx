@@ -3,6 +3,7 @@ import { LogLayer, LayerType, LayerPreset, LayerRegistryEntry } from '../types';
 import { LayersPanel } from './LayersPanel';
 import { FileTree } from './FileTree';
 import { useLayerRegistry } from '../hooks/useLayerRegistry';
+import { useDrag } from '../hooks/useDrag';
 import { getBookmarks, clearBookmarks, getLinesByIndices, physicalToVisualIndex } from '../bridge_client';
 
 // 文件信息接口
@@ -201,6 +202,25 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
     const getIcon = (entry: LayerRegistryEntry) => {
         return ICON_LIBRARY[entry.icon] || (entry.is_builtin ? ICON_LIBRARY.default : ICON_LIBRARY.plugin);
     };
+
+    // Drag handlers - Defined at top level to follow Rules of Hooks
+    const { handleMouseDown: handleExplorerResize } = useDrag<number>({
+        onStart: () => openedHeight,
+        onDrag: (delta, startH) => {
+            setOpenedHeight(Math.max(80, Math.min(600, startH + delta)));
+        }
+    });
+
+    const { handleMouseDown: handlePresetResize } = useDrag<number>({
+        onStart: () => presetHeight,
+        onDrag: (delta, startH) => {
+            // Dragging UP (negative delta) should INCREASE height
+            // Old logic: delta = startY - moveEvent.clientY (positive when going up)
+            // Hook logic: delta = moveEvent.clientY - startY (negative when going up)
+            // So: startH - HookDelta (negative) = startH + AbsDelta.
+            setPresetHeight(Math.max(100, Math.min(500, startH - delta)));
+        }
+    });
 
 
     // Render dropdown menu for adding layers
@@ -475,28 +495,7 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
                 {/* Resizer Handle for Opened Section */}
                 <div
                     className="absolute -top-1 left-0 right-0 h-2 cursor-row-resize z-50 opacity-0 group-hover/explorer:opacity-100 hover:opacity-100 flex items-center justify-center transition-opacity"
-                    onMouseDown={(e) => {
-                        e.preventDefault();
-                        const startY = e.clientY;
-                        const startHeight = openedHeight;
-
-                        const handleMouseMove = (moveEvent: MouseEvent) => {
-                            // Dragging DOWN (positive delta) should INCREASE 'Opened' height
-                            const delta = moveEvent.clientY - startY;
-                            const newHeight = Math.max(80, Math.min(600, startHeight + delta));
-                            setOpenedHeight(newHeight);
-                        };
-
-                        const handleMouseUp = () => {
-                            document.removeEventListener('mousemove', handleMouseMove);
-                            document.removeEventListener('mouseup', handleMouseUp);
-                            document.body.style.cursor = '';
-                        };
-
-                        document.addEventListener('mousemove', handleMouseMove);
-                        document.addEventListener('mouseup', handleMouseUp);
-                        document.body.style.cursor = 'row-resize';
-                    }}
+                    onMouseDown={handleExplorerResize}
                 >
                     <div className="w-8 h-1 bg-blue-500/50 rounded-full" />
                 </div>
@@ -545,28 +544,7 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
                 {/* Resizer Handle */}
                 <div
                     className="absolute -top-1 left-0 right-0 h-2 cursor-row-resize z-50 opacity-0 group-hover/presets:opacity-100 hover:opacity-100 flex items-center justify-center"
-                    onMouseDown={(e) => {
-                        e.preventDefault();
-                        const startY = e.clientY;
-                        const startHeight = presetHeight;
-
-                        const handleMouseMove = (moveEvent: MouseEvent) => {
-                            // Dragging UP (negative delta) should INCREASE height
-                            const delta = startY - moveEvent.clientY;
-                            const newHeight = Math.max(100, Math.min(500, startHeight + delta));
-                            setPresetHeight(newHeight);
-                        };
-
-                        const handleMouseUp = () => {
-                            document.removeEventListener('mousemove', handleMouseMove);
-                            document.removeEventListener('mouseup', handleMouseUp);
-                            document.body.style.cursor = '';
-                        };
-
-                        document.addEventListener('mousemove', handleMouseMove);
-                        document.addEventListener('mouseup', handleMouseUp);
-                        document.body.style.cursor = 'row-resize';
-                    }}
+                    onMouseDown={handlePresetResize}
                 >
                     <div className="w-8 h-1 bg-blue-500/50 rounded-full" />
                 </div>

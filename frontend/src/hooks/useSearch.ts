@@ -143,7 +143,7 @@ export function useSearch({
         setCurrentMatchRank(-1);
         setCurrentMatchIndex(-1);
         setIsSearching(false);
-    }, []);
+    }, [setSearchQuery]);
 
     return {
         currentMatchRank,

@@ -43,7 +43,19 @@ graph TD
 - **Virtualization Sync**: `LogViewer` viewport depends on `read_processed_lines` REST endpoint.
 - **Layer Sync**: Frontend calls `sync_layers` (processing) or `sync_decorations` (rendering) based on layer category.
 
-## 5. Change Log (2026-02-05)
+## 5. Change Log (2026-02-07)
+- **Bug Fix Sprint**: 针对代码质量分析发现的问题进行了集中修复。
+    - **Type Safety**: 修复 `LogViewer` 右键菜单 `lineIndex` 类型缺失问题。
+    - **Hook Dependencies**: 修复 `useSearch` Hook 中 `clearSearch` 缺少依赖的潜在 Bug。
+    - **Race Condition**: 优化书签导航 (`F2`) 逻辑，使用 `useRef` 管理超时，防止快速按键导致的竞态冲突。
+    - **Stability**: 后端增加 `mmap` 关闭状态检查，防止读取已关闭文件导致崩溃。
+    - **Boundary Case**: 修复当所有行被过滤时 (`visible_indices` 为空) 书签导航可能越界的问题。
+- **Code Quality**:
+    - **Refactoring**: 提取 `useDrag` Hook，消除 `UnifiedPanel.tsx` 中的重复拖拽逻辑。
+    - **Maintainability**: 将 `PipelineWorker` 进程清理超时提取为 `PROCESS_CLEANUP_TIMEOUT` 常量。
+- **Documentation**: 更新 `DESIGN.md` 以反映从 PyQt6 到 FastAPI 的架构迁移。
+
+## 6. Change Log (2026-02-05)
 - **Unified Opening Flow**: 整合“打开文件”与“打开项目”为统一的“浏览并打开 (Open)”入口。
     - **Logic**: 基于 `RemotePathPicker` 的 `both` 模式，自动识别文件（直接打开）或文件夹（设为工作区）。
     - **UI**: 侧边栏 Explorer 和欢迎界面提供一致的单入口体验。
