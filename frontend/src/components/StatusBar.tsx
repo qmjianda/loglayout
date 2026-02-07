@@ -1,5 +1,5 @@
-
 import React from 'react';
+import { usePluginWidgets } from '../hooks/usePluginWidgets';
 
 interface StatusBarProps {
   lines: number;
@@ -14,6 +14,8 @@ interface StatusBarProps {
 }
 
 export const StatusBar: React.FC<StatusBarProps> = ({ lines, totalLines, size, isProcessing, isLayerProcessing, operationStatus, searchMatchCount, currentLine, pendingCliFiles }) => {
+  const { widgets, widgetData } = usePluginWidgets('statusbar');
+
   const formatSize = (bytes: number) => {
     if (bytes === 0) return '0 B';
     const k = 1024;
@@ -52,6 +54,24 @@ export const StatusBar: React.FC<StatusBarProps> = ({ lines, totalLines, size, i
           )}
           <span className="font-bold tracking-tight">{getStatusMessage()}</span>
         </div>
+
+        {/* Plugin Dynamic Widgets */}
+        {widgets.map(w => {
+          const data = widgetData[w.type];
+          if (!data) return null;
+          return (
+            <div
+              key={w.type}
+              className="flex items-center space-x-1 px-2 py-0.5 rounded hover:bg-white/10 cursor-help transition-colors border-x border-white/5"
+              title={data.tooltip || w.display_name}
+              style={{ color: data.color }}
+            >
+              {data.icon && <span className="mr-1">{/* Icon render support can be added here */}</span>}
+              <span className="font-medium whitespace-nowrap">{data.text || w.display_name}</span>
+            </div>
+          );
+        })}
+
         <div className="hover:bg-white/10 px-1 cursor-pointer transition-colors opacity-80">UTF-8</div>
       </div>
       <div className="flex items-center space-x-6">
@@ -61,15 +81,14 @@ export const StatusBar: React.FC<StatusBarProps> = ({ lines, totalLines, size, i
             <span>{searchMatchCount.toLocaleString()} matches</span>
           </div>
         )}
-        <div className="opacity-90">
+        <div className="opacity-90 font-mono">
           {lines === totalLines ? (
-            <span className="font-mono">{(Number(totalLines) || 0).toLocaleString()} Lines</span>
+            <span>{(Number(totalLines) || 0).toLocaleString()} Lines</span>
           ) : (
             <>
-              <span className="font-mono">{(Number(lines) || 0).toLocaleString()}</span>
+              <span>{(Number(lines) || 0).toLocaleString()}</span>
               <span className="mx-1 opacity-50">/</span>
-              <span className="font-mono opacity-70">{(Number(totalLines) || 0).toLocaleString()}</span>
-              <span className="ml-1.5 opacity-60">Lines</span>
+              <span className="opacity-70">{(Number(totalLines) || 0).toLocaleString()}</span>
             </>
           )}
         </div>

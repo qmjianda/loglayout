@@ -62,6 +62,13 @@ graph TD
         - 提取 `SearchMixin` (`backend/search_mixin.py`)，将搜索、书签和索引转换逻辑从主 `FileBridge` 类中剥离。
         - 增强 `main.py` 异常捕获和端口冲突提示，默认端口保持 12345 但支持灵活调整。
     - **Bug Fix**: 修复了 `useDrag` Hook 的累加计算错误以及由此导致的面板抖动问题。
+- **Plugin API Expansion (Phase 7)**:
+    - **Storage Abstraction**: 引入 `BaseStorageProvider` 和 `StorageRegistry`。通过 URI Scheme (如 `file://`, `mem://`) 映射不同的后端。
+    - **UI Expansion**: 
+        - 后端新增 `UIWidget` 基类与位置角色 (`role`) 概念。
+        - 增加 `/api/get_ui_widgets` 和 `/api/get_widget_data` 接口。
+    - **Frontend Widgets**: 前端引入 `usePluginWidgets` Hook，`StatusBar` 支持动态加载并定时刷新插件挂件。
+    - **Demo Plugin**: 实现 `SystemStatsWidget` (状态栏负载监控) 和 `AnonymizerLayer` (脱敏处理层) 演示插件。
 - **Automated Testing Enhancement (Phase 6)**:
     - **Testing Framework**: 引入 `pytest` 替换零散测试脚本，提供更标准的基础设施 (`conftest.py`)。
     - **Unit Testing**: 为 `SearchMixin` 增加了高覆盖率的单元测试，涵盖索引转换与搜索 rank 计算逻辑。

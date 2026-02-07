@@ -1,19 +1,20 @@
-
 import os
 import importlib.util
 import inspect
-from loglayer.core import DataProcessingLayer, RenderingLayer, LayerCategory
+from loglayer.core import DataProcessingLayer, RenderingLayer, UIWidget, LayerCategory
+from loglayer.storage import StorageRegistry
 
 class LayerRegistry:
     """
-    图层注册表。
-    管理所有内置图层和动态加载的插件图层。
-    支持按类别 (Processing/Rendering) 分组返回。
+    图层与插件注册表。
+    管理所有内置图层、动态加载的插件图层以及 UI 挂件。
     """
     def __init__(self, plugin_dir=None):
         self.builtin_layers = {}  # type_id -> class
         self.plugin_layers = {}   # type_id -> class
+        self.plugin_widgets = {}  # type_id -> class
         self.plugin_dir = plugin_dir
+        self.storage = StorageRegistry()
         
         # 加载内置图层 - 处理层
         from loglayer.builtin.filter import FilterLayer
@@ -40,17 +41,16 @@ class LayerRegistry:
         self.register_builtin("BOOKMARK", BookmarkLayer)
 
     def register_builtin(self, type_id, cls):
-        """注册内置图层"""
         self.builtin_layers[type_id] = cls
 
     def discover_plugins(self):
-        """
-        扫描 plugin_dir 目录下的 Python 文件，尝试发现并加载插件图层。
-        """
+        """扫描插件目录，加载图层和 UI 挂件"""
         if not self.plugin_dir or not os.path.exists(self.plugin_dir):
             return
         
         self.plugin_layers.clear()
+        self.plugin_widgets.clear()
+        
         for filename in os.listdir(self.plugin_dir):
             if filename.endswith(".py") and not filename.startswith("_"):
                 path = os.path.join(self.plugin_dir, filename)
@@ -62,14 +62,21 @@ class LayerRegistry:
                     
                     for attr_name in dir(module):
                         attr = getattr(module, attr_name)
-                        # 检查是否为 DataProcessingLayer 或 RenderingLayer 的子类
                         if inspect.isclass(attr):
+                            # 1. 发现图层
                             is_processing = issubclass(attr, DataProcessingLayer) and attr is not DataProcessingLayer
                             is_rendering = issubclass(attr, RenderingLayer) and attr is not RenderingLayer
                             if is_processing or is_rendering:
                                 plugin_type = f"PYTHON_{name}_{attr_name}".upper()
                                 self.plugin_layers[plugin_type] = attr
-                                print(f"[Registry] Found plugin: {plugin_type}")
+                                print(f"[Registry] Found layer plugin: {plugin_type}")
+                            
+                            # 2. 发现 UI 挂件
+                            elif issubclass(attr, UIWidget) and attr is not UIWidget:
+                                widget_type = f"WIDGET_{name}_{attr_name}".upper()
+                                self.plugin_widgets[widget_type] = attr
+                                print(f"[Registry] Found UI widget: {widget_type}")
+                                
                 except Exception as e:
                     print(f"[Registry] Error loading plugin {filename}: {e}")
 
@@ -86,7 +93,7 @@ class LayerRegistry:
         }
 
     def get_all_types(self):
-        """返回所有可用图层类型的详细描述（供前端动态生成 UI 使用）"""
+        """返回所有可用图层类型"""
         results = []
         for tid, cls in self.builtin_layers.items():
             results.append(self._get_layer_info(tid, cls, True))
@@ -103,13 +110,29 @@ class LayerRegistry:
         }
 
     def create_layer_instance(self, type_id, config):
-        """根据类型 ID 和配置参数创建一个图层实例"""
+        """根据类型 ID 创建图层实例"""
         cls = self.builtin_layers.get(type_id) or self.plugin_layers.get(type_id)
         if not cls: return None
         return cls(config)
     
     def is_rendering_layer(self, type_id):
-        """判断给定类型是否为渲染层"""
         cls = self.builtin_layers.get(type_id) or self.plugin_layers.get(type_id)
         if not cls: return False
         return getattr(cls, "category", None) == LayerCategory.RENDERING
+
+    def get_ui_widgets(self):
+        """返回所有可用挂件的元信息"""
+        results = []
+        for tid, cls in self.plugin_widgets.items():
+            results.append({
+                "type": tid,
+                "display_name": cls.display_name,
+                "role": getattr(cls, "role", "statusbar"),
+                "refresh_interval": getattr(cls, "refresh_interval", 0)
+            })
+        return results
+
+    def create_widget_instance(self, type_id):
+        cls = self.plugin_widgets.get(type_id)
+        if not cls: return None
+        return cls()

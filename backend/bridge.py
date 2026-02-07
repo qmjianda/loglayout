@@ -379,11 +379,11 @@ class StatsWorker(CustomThread):
         return l_id, {"count": count, "distribution": norm_dist}
 
 class LogSession:
-    def __init__(self, file_id, path):
+    def __init__(self, file_id, path, provider=None):
         self.id = file_id
         self.path = str(path)
+        self.provider = provider
         self.file_obj = None
-        self.fd = None
         self.mmap = None
         self.size = 0
         self.line_offsets = array.array('Q')
@@ -412,10 +412,6 @@ class LogSession:
             try: self.file_obj.close()
             except: pass
             self.file_obj = None
-        elif self.fd:
-            try: os.close(self.fd)
-            except: pass
-            self.fd = None
 
 class FileBridge(SearchMixin):
     fileLoaded = Signal(str, str)
@@ -475,21 +471,24 @@ class FileBridge(SearchMixin):
     def open_file(self, file_id: str, file_path: str) -> bool:
         try:
             if file_id in self._sessions: self._sessions[file_id].close(self)
-            path = Path(file_path)
-            if not path.exists(): return False
-            session = LogSession(file_id, path)
-            session.file_obj = open(path, 'rb')
-            session.fd = session.file_obj.fileno()
-            session.size = path.stat().st_size
+            
+            provider = self._registry.storage.get_provider(file_path)
+            session = LogSession(file_id, file_path, provider)
+            
+            session.size = provider.get_size(file_path)
+            session.file_obj = provider.open(file_path)
             if session.size == 0:
                 session.line_offsets = array.array('Q')
                 self._sessions[file_id] = session
-                self.fileLoaded.emit(file_id, json.dumps({"name": path.name, "size": 0, "lineCount": 0}))
+                self.fileLoaded.emit(file_id, json.dumps({"name": provider.get_name(file_path), "size": 0, "lineCount": 0}))
                 return True
-            session.mmap = mmap.mmap(session.fd, 0, access=mmap.ACCESS_READ)
+            
+            session.mmap = provider.get_mmap(file_path)
             self._sessions[file_id] = session
             self.operationStarted.emit(file_id, "indexing")
-            worker = IndexingWorker(session.mmap, session.size)
+            
+            # TODO: Handle non-mmap workers for remote providers
+            worker = IndexingWorker(session.mmap or session.file_obj, session.size)
             session.workers['indexing'] = worker
             worker.finished.connect(lambda offsets: self._on_indexing_finished(file_id, offsets))
             worker.progress.connect(lambda p: self.operationProgress.emit(file_id, "indexing", p))
@@ -506,7 +505,8 @@ class FileBridge(SearchMixin):
         session.line_offsets = offsets
         session.visible_indices = None
         session.cache.clear()
-        self.fileLoaded.emit(file_id, json.dumps({"name": Path(session.path).name, "size": session.size, "lineCount": len(offsets)}))
+        name = session.provider.get_name(session.path) if session.provider else Path(session.path).name
+        self.fileLoaded.emit(file_id, json.dumps({"name": name, "size": session.size, "lineCount": len(offsets)}))
 
     def sync_all(self, file_id: str, layers_json: str, search_json: str) -> bool:
         """Legacy API - delegates to sync_layers for backward compatibility"""

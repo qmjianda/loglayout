@@ -87,6 +87,22 @@ class RenderingLayer(Component):
 
 
 # ============================================================
+# UI 扩展基类 (UI Extensions)
+# ============================================================
+
+class UIWidget(Component):
+    """
+    UI 挂件基类。
+    允许插件向主界面槽位（状态栏、侧边栏等）注入动态内容。
+    """
+    role = "statusbar"           # 位置: statusbar, sidebar, editor_toolbar
+    refresh_interval = 5.0      # 自动刷新间隔 (秒)，0 表示不自动刷新
+    
+    def get_data(self) -> dict:
+        """返回要在 UI 中渲染的数据"""
+        return {}
+
+# ============================================================
 # 向后兼容别名 (将在后续版本移除)
 # ============================================================
 
@@ -98,3 +114,4 @@ NativeLayer = NativeProcessingLayer
 
 # 旧的 PluginLayer 现在指向 DataProcessingLayer
 PluginLayer = DataProcessingLayer
+

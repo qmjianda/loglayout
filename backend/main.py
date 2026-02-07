@@ -161,7 +161,20 @@ def get_search_matches_range(file_id: str, start_rank: int, count: int):
 
 @app.get("/api/get_layer_registry")
 def get_layer_registry():
-    return json.loads(bridge.get_layer_registry())
+    return bridge._registry.get_all_types()
+
+@app.get("/api/get_ui_widgets")
+def get_ui_widgets():
+    """获取所有已加载插件定义的 UI 挂件信息"""
+    return bridge._registry.get_ui_widgets()
+
+@app.get("/api/get_widget_data")
+def get_widget_data(type_id: str):
+    """获取指定挂件的实时数据"""
+    widget = bridge._registry.create_widget_instance(type_id)
+    if widget:
+        return widget.get_data()
+    return {}
 
 @app.post("/api/reload_plugins")
 def reload_plugins():
