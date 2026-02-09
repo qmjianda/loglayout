@@ -120,6 +120,7 @@ class WebBridge implements FileBridgeAPI {
     }
     async get_layer_registry() { return JSON.stringify(await this.get('get_layer_registry')); }
     async reload_plugins() { return this.post('reload_plugins'); }
+    async get_platform_info() { return this.get('platform'); }
 
     // Bookmark APIs
     async toggle_bookmark(fileId: string, lineIndex: number) {
@@ -211,6 +212,11 @@ export async function getLayerRegistry(): Promise<string> {
 export async function reloadPlugins(): Promise<boolean> {
     if (!fileBridge) return false;
     return await fileBridge.reload_plugins();
+}
+
+export async function getPlatformInfo(): Promise<string> {
+    if (!fileBridge) return "Unknown";
+    return await fileBridge.get_platform_info();
 }
 
 export function signalReady(): void {

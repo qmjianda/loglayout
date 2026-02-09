@@ -107,26 +107,38 @@ export function useSearch({
 
     // Find next/prev match
     const findNextSearchMatch = useCallback(async (direction: 'next' | 'prev', fromIndex?: number | null): Promise<number> => {
-        if (!searchQuery || searchMatchCount === 0 || !activeFileId) return -1;
+        // [MODIFIED] Robust check - searchQuery and activeFileId are mandatory.
+        // searchMatchCount might be 0 in current render but we still want to try backend jump if fromIndex is provided.
+        if (!searchQuery || !activeFileId) return -1;
 
         const { getSearchMatchIndex, getNearestSearchRank } = await import('../bridge_client');
 
         let nextRank = -1;
 
-        // Logic: If fromIndex is provided (e.g., current highlighted/cursor line), 
+        // Logic: If fromIndex is provided (e.g., current highlighted/cursor line),
         // we find the nearest match from there. Otherwise we use currentMatchRank.
-        const effectiveCurrentIndex = fromIndex !== undefined && fromIndex !== null ? fromIndex : -1;
+        const effectiveCurrentIndex = (fromIndex !== undefined && fromIndex !== null) ? fromIndex : -1;
 
         if (effectiveCurrentIndex !== -1) {
+            // Use backend to find nearest match rank from current line
             nextRank = await getNearestSearchRank(activeFileId, effectiveCurrentIndex, direction);
         } else {
-            if (direction === 'next') {
-                nextRank = (currentMatchRank + 1) % searchMatchCount;
+            // Sequential navigation - requires matchCount to be > 0
+            if (searchMatchCount === 0) return -1;
+
+            if (currentMatchRank === -1) {
+                // If no current match, jump to first/last based on direction
+                nextRank = direction === 'next' ? 0 : searchMatchCount - 1;
             } else {
-                nextRank = (currentMatchRank - 1 + searchMatchCount) % searchMatchCount;
+                if (direction === 'next') {
+                    nextRank = (currentMatchRank + 1) % searchMatchCount;
+                } else {
+                    nextRank = (currentMatchRank - 1 + searchMatchCount) % searchMatchCount;
+                }
             }
         }
 
+        // Final safety check for rank validity
         if (nextRank !== -1) {
             setCurrentMatchRank(nextRank);
             const index = await getSearchMatchIndex(activeFileId, nextRank);

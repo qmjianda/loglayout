@@ -4,16 +4,34 @@ import sys
 import tempfile
 import json
 
-# Add backend to sys.path
-sys.path.append(os.path.join(os.path.dirname(os.path.dirname(__file__)), 'backend'))
+# Add project root and backend to sys.path
+project_root = os.path.dirname(os.path.dirname(__file__))
+if project_root not in sys.path:
+    sys.path.append(project_root)
+backend_path = os.path.join(project_root, 'backend')
+if backend_path not in sys.path:
+    sys.path.append(backend_path)
 
 from bridge import FileBridge, LogSession
 
 @pytest.fixture
-def bridge_instance():
+def bridge():
     """Provides a clean FileBridge instance."""
-    bridge = FileBridge()
+    return FileBridge()
+
+@pytest.fixture
+def bridge_instance(bridge):
+    """Provides a clean FileBridge instance (legacy compatibility)."""
     return bridge
+
+@pytest.fixture
+def rg_path():
+    """Returns the path to the bundled ripgrep binary."""
+    base_dir = os.path.dirname(os.path.dirname(__file__))
+    if sys.platform == "win32":
+        return os.path.join(base_dir, "bin", "windows", "ripgrep-15.1.0-x86_64-pc-windows-msvc", "rg.exe")
+    else:
+        return os.path.join(base_dir, "bin", "linux", "ripgrep-15.1.0-x86_64-unknown-linux-musl", "rg")
 
 @pytest.fixture
 def mock_session():

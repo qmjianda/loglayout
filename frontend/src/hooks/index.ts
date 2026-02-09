@@ -9,3 +9,4 @@ export * from './useSearch';
 export * from './useUIState';
 export * from './useWorkspaceConfig';
 export * from './useRemotePathPicker';
+export * from './usePlatformInfo';

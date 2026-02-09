@@ -134,15 +134,14 @@ export const UnifiedPanel: React.FC<UnifiedPanelProps> = ({
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, [activeMenuId]);
 
-    // Auto-expand active file ONLY when first opened (not interacted with yet)
-    // This effect only sets to true if the file has never been toggled (undefined state)
-    // Auto-expand logic removed to enforce "collapse all by default" behavior
+    // 自动展开当前激活的文件（增量展开，不影响其他已手动展开的文件）
     const prevActiveFileIdRef = useRef<string | null>(null);
     useEffect(() => {
         if (activeFileId && activeFileId !== prevActiveFileIdRef.current) {
-            // Strict auto-expand active, collapse others
-            // We use a completely new object with only the active file as true, effectively collapsing all others
-            setExpandedFiles({ [activeFileId]: true });
+            setExpandedFiles(prev => ({
+                ...prev,
+                [activeFileId]: true
+            }));
         }
         prevActiveFileIdRef.current = activeFileId;
     }, [activeFileId]);

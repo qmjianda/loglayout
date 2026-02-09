@@ -339,9 +339,9 @@ export const LogViewer: React.FC<LogViewerProps> = ({
                   ${isHighlighted ? 'bg-blue-500/20' : ''}`}
                 style={{ height: '20px', minHeight: '20px', maxHeight: '20px' }}
               >
-                {/* 行号栏：显示虚拟行号和物理行号 */}
+                {/* 行号栏：显示虚拟行号，悬停提示物理行号 */}
                 <div
-                  className={`w-20 text-right pr-4 shrink-0 select-none text-[10px] flex flex-col justify-center items-end leading-[9px] ${isHighlighted ? 'text-blue-400 font-semibold' : 'text-gray-600'}`}
+                  className={`w-20 text-right pr-4 shrink-0 select-none text-[10px] flex items-center justify-end ${isHighlighted ? 'text-blue-400 font-semibold' : 'text-gray-600'}`}
                 >
                   <span className="flex items-center gap-1 group/gutter min-w-[32px] justify-end">
                     {!isMarked && (
@@ -351,7 +351,7 @@ export const LogViewer: React.FC<LogViewerProps> = ({
                           onToggleBookmark?.(originalIndex);
                         }}
                         className="text-gray-500/0 group-hover/gutter:text-gray-500/40 text-[11px] cursor-pointer transition-all hover:scale-125 select-none pr-1"
-                        title="点击添加书签"
+                        title={`点击添加书签 (物理行号: #${(originalIndex + 1).toLocaleString()})`}
                       >
                         ●
                       </span>
@@ -380,13 +380,10 @@ export const LogViewer: React.FC<LogViewerProps> = ({
                         onToggleBookmark?.(originalIndex);
                       }}
                       className="cursor-pointer hover:text-white transition-colors py-1"
-                      title="点击切换书签"
+                      title={`点击切换书签 (物理行号: #${(originalIndex + 1).toLocaleString()})`}
                     >
                       {(absoluteIdx + 1).toLocaleString()}
                     </span>
-                  </span>
-                  <span className={`text-[8px] mt-0.5 font-normal tracking-tighter opacity-0 group-hover:opacity-40 ${isHighlighted ? 'opacity-40' : ''} transition-opacity duration-300`}>
-                    #{(originalIndex + 1).toLocaleString()}
                   </span>
                 </div>
                 <div className="flex-1 text-[#d4d4d4] overflow-hidden whitespace-pre min-w-0 pointer-events-auto select-text">{renderLineContent(line)}</div>

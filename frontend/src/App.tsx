@@ -309,7 +309,11 @@ const App: React.FC = () => {
         // [BUG FIX 3] Nearest jumping after search finishes
         // If we are in searching mode and no rank is selected yet, jump to the nearest!
         if (searchQuery && matchCount > 0 && currentMatchRank === -1) {
-          findNextSearchMatchWithJump('next');
+          // Use a tiny timeout to let React finish the current state update cycle (setProcessedCache)
+          // so the subsequent findNextSearchMatchWithJump sees the correct matchCount.
+          setTimeout(() => {
+            findNextSearchMatchWithJump('next');
+          }, 0);
         }
       }
     },

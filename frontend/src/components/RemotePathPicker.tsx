@@ -11,6 +11,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Command } from 'cmdk';
+import { usePlatformInfo } from '../hooks/usePlatformInfo';
 import './RemotePathPicker.css';
 
 // 图标组件
@@ -115,8 +116,9 @@ export const RemotePathPicker: React.FC<RemotePathPickerProps> = ({
     const [pathHistory, setPathHistory] = useState<string[]>([]);
 
     // 获取用户主目录和驱动器列表 (跨平台)
+    const { isWindows } = usePlatformInfo();
+
     const quickAccessItems = useMemo(() => {
-        const isWindows = navigator.platform.toLowerCase().includes('win');
         if (isWindows) {
             return [
                 { name: '本地磁盘 (C:)', path: 'C:\\', icon: <DriveIcon /> },
@@ -126,25 +128,24 @@ export const RemotePathPicker: React.FC<RemotePathPickerProps> = ({
         }
         return [
             { name: '根目录', path: '/', icon: <DriveIcon /> },
-            { name: '用户目录', path: '/home', icon: <HomeIcon /> },
+            { name: '个人家目录', path: '~', icon: <HomeIcon /> },
         ];
-    }, []);
+    }, [isWindows]);
 
     // 规范化路径
     const normalizePath = useCallback((path: string): string => {
-        const isWindows = navigator.platform.toLowerCase().includes('win');
+        let p = path.trim(); // 自动清理前后空格
         if (isWindows) {
             // Windows 路径规范化
-            return path.replace(/\//g, '\\').replace(/\\+/g, '\\');
+            return p.replace(/\//g, '\\').replace(/\\+/g, '\\');
         }
-        // Unix 路径规范化
-        return path.replace(/\/+/g, '/');
-    }, []);
+        // Unix 路径规范化 (保留 ~ 开头支持家目录)
+        return p.replace(/\/+/g, '/');
+    }, [isWindows]);
 
     // 获取父目录
     const getParentPath = useCallback((path: string): string => {
         const normalized = normalizePath(path);
-        const isWindows = navigator.platform.toLowerCase().includes('win');
         const separator = isWindows ? '\\' : '/';
 
         // 去掉末尾的分隔符
@@ -236,8 +237,11 @@ export const RemotePathPicker: React.FC<RemotePathPickerProps> = ({
         setInputValue(value);
 
         // 如果输入的是完整路径，尝试加载
-        const normalized = normalizePath(value);
-        if (normalized && (normalized.endsWith('\\') || normalized.endsWith('/'))) {
+        const trimmed = value.trim();
+        const normalized = normalizePath(trimmed);
+
+        // 支持 ~ 直接回车或输入 / 后触发
+        if (normalized && (normalized === '~' || normalized.endsWith('\\') || normalized.endsWith('/'))) {
             loadDirectory(normalized);
         }
     }, [normalizePath, loadDirectory]);
@@ -312,7 +316,6 @@ export const RemotePathPicker: React.FC<RemotePathPickerProps> = ({
 
     // 面包屑导航
     const breadcrumbs = useMemo(() => {
-        const isWindows = navigator.platform.toLowerCase().includes('win');
         const separator = isWindows ? '\\' : '/';
         const parts = currentPath.split(separator).filter(Boolean);
 

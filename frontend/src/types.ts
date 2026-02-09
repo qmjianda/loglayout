@@ -115,6 +115,7 @@ export interface FileBridgeAPI {
   // Registry operations
   get_layer_registry(): Promise<string>;
   reload_plugins(): Promise<boolean>;
+  get_platform_info(): Promise<string>;
 
   // Signals
   fileLoaded: { connect: (cb: (fileId: string, payloadJson: string) => void) => void };

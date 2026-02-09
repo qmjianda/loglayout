@@ -114,7 +114,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
 @app.get("/api/platform")
 def get_platform():
-    return sys.platform
+    return bridge.get_platform_info()
 
 @app.get("/api/has_native_dialogs")
 def has_native_dialogs():
@@ -248,6 +248,11 @@ def get_nearest_bookmark_index(file_id: str, current_index: int, direction: str)
 def clear_bookmarks(data: dict = Body(...)):
     """清除指定文件的所有书签"""
     return json.loads(bridge.clear_bookmarks(data['file_id']))
+
+@app.post("/api/update_bookmark_comment")
+def update_bookmark_comment(data: dict = Body(...)):
+    """更新书签注释"""
+    return json.loads(bridge.update_bookmark_comment(data['file_id'], data['line_index'], data['comment']))
 
 @app.get("/api/physical_to_visual_index")
 def physical_to_visual_index(file_id: str, physical_index: int):

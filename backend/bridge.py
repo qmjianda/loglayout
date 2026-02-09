@@ -437,6 +437,10 @@ class FileBridge(SearchMixin):
         self._registry = LayerRegistry(plugin_dir)
         self._registry.discover_plugins()
 
+    def get_platform_info(self) -> str:
+        """Returns the current operating system name."""
+        return platform.system()
+
     def _retire_worker(self, worker):
         if not worker: return
         try:
