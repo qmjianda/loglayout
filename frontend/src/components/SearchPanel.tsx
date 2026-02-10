@@ -9,17 +9,56 @@ interface SearchPanelProps {
   onNavigate?: (direction: 'next' | 'prev') => void;
 }
 
-export const SearchPanel: React.FC<SearchPanelProps> = ({ 
-  onSearch, config, setConfig, matchCount = 0, currentIndex = 0, onNavigate 
+export const SearchPanel: React.FC<SearchPanelProps> = ({
+  onSearch, config, setConfig, matchCount = 0, currentIndex = 0, onNavigate
 }) => {
   const [inputValue, setInputValue] = useState('');
+  const [isRegexValid, setIsRegexValid] = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // 搜索防抖 (200ms)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      onSearch(inputValue);
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [inputValue, onSearch]);
+
+  // 正则合法性校验
+  useEffect(() => {
+    if (config.regex && inputValue) {
+      try {
+        new RegExp(inputValue);
+        setIsRegexValid(true);
+      } catch (e) {
+        setIsRegexValid(false);
+      }
+    } else {
+      setIsRegexValid(true);
+    }
+  }, [inputValue, config.regex]);
 
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // 处理快捷键
+    if (e.altKey) {
+      if (e.key === 'c' || e.key === 'C') {
+        setConfig(prev => ({ ...prev, caseSensitive: !prev.caseSensitive }));
+        return;
+      }
+      if (e.key === 'w' || e.key === 'W') {
+        setConfig(prev => ({ ...prev, wholeWord: !prev.wholeWord }));
+        return;
+      }
+      if (e.key === 'r' || e.key === 'R') {
+        setConfig(prev => ({ ...prev, regex: !prev.regex }));
+        return;
+      }
+    }
+
     if (e.key === 'Enter') {
       e.preventDefault();
       if (e.shiftKey) {
@@ -46,19 +85,19 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({
         {matchCount > 0 && (
           <div className="flex items-center space-x-1">
             <span className="text-[10px] text-gray-500 font-mono">
-              {matchCount > 0 ? `${currentIndex} / ${matchCount}` : '无结果'}
+              {matchCount > 0 ? `${currentIndex + 1} / ${matchCount}` : '无结果'}
             </span>
             <div className="flex ml-2 border-l border-white/10 pl-2">
-              <button 
+              <button
                 onClick={() => onNavigate?.('prev')}
-                className="p-1 hover:bg-[#3c3c3c] rounded text-gray-400 hover:text-white transition-colors"
+                className="p-1 hover:bg-[#3c3c3c] rounded text-gray-400 hover:text-white transition-colors cursor-pointer"
                 title="上一个匹配项 (Shift+Enter)"
               >
                 <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 15l7-7 7 7"/></svg>
               </button>
-              <button 
+              <button
                 onClick={() => onNavigate?.('next')}
-                className="p-1 hover:bg-[#3c3c3c] rounded text-gray-400 hover:text-white transition-colors"
+                className="p-1 hover:bg-[#3c3c3c] rounded text-gray-400 hover:text-white transition-colors cursor-pointer"
                 title="下一个匹配项 (Enter)"
               >
                 <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 9l-7 7-7-7"/></svg>
@@ -69,53 +108,55 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({
       </div>
 
       <div className="relative group mb-4">
-        <div className={`relative flex items-center bg-[#3c3c3c] border transition-all rounded overflow-hidden ${inputValue ? 'border-blue-500/50' : 'border-transparent'}`}>
-          <input 
+        <div className={`relative flex items-center bg-[#3c3c3c] border transition-all rounded overflow-hidden ${
+          !isRegexValid ? 'border-red-500/50' : (inputValue ? 'border-blue-500/50' : 'border-transparent')
+        }`}>
+          <input
             ref={inputRef}
-            type="text" 
+            type="text"
             value={inputValue}
-            onChange={(e) => {
-              setInputValue(e.target.value);
-              onSearch(e.target.value);
-            }}
+            onChange={(e) => setInputValue(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="搜索日志..."
+            placeholder={config.regex ? "输入正则表达式..." : "搜索日志..."}
             className="w-full bg-transparent text-white text-xs px-2 py-1.5 focus:outline-none pr-28"
           />
-          
+
           <div className="absolute right-1 flex items-center space-x-0.5">
             {inputValue && (
-              <button 
+              <button
                 onClick={clearSearch}
-                className="w-5 h-5 flex items-center justify-center text-gray-500 hover:text-white"
+                className="w-5 h-5 flex items-center justify-center text-gray-500 hover:text-white cursor-pointer"
                 title="清除"
               >
                 <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="3" d="M6 18L18 6M6 6l12 12"/></svg>
               </button>
             )}
-            <button 
+            <button
               onClick={() => setConfig(prev => ({ ...prev, caseSensitive: !prev.caseSensitive }))}
-              className={`w-6 h-6 flex items-center justify-center rounded text-[10px] transition-colors ${config.caseSensitive ? 'bg-blue-600 text-white shadow-inner' : 'text-gray-400 hover:bg-[#555]'}`}
-              title="区分大小写"
+              className={`w-6 h-6 flex items-center justify-center rounded text-[10px] transition-colors cursor-pointer ${config.caseSensitive ? 'bg-blue-600 text-white shadow-inner' : 'text-gray-400 hover:bg-[#555]'}`}
+              title="区分大小写 (Alt+C)"
             >
               Aa
             </button>
-            <button 
+            <button
               onClick={() => setConfig(prev => ({ ...prev, wholeWord: !prev.wholeWord }))}
-              className={`w-6 h-6 flex items-center justify-center rounded text-[10px] transition-colors ${config.wholeWord ? 'bg-blue-600 text-white shadow-inner' : 'text-gray-400 hover:bg-[#555]'}`}
-              title="全字匹配"
+              className={`w-6 h-6 flex items-center justify-center rounded text-[10px] transition-colors cursor-pointer ${config.wholeWord ? 'bg-blue-600 text-white shadow-inner' : 'text-gray-400 hover:bg-[#555]'}`}
+              title="全字匹配 (Alt+W)"
             >
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2.5" d="M3 12h18M3 6h18M3 18h18"/></svg>
             </button>
-            <button 
+            <button
               onClick={() => setConfig(prev => ({ ...prev, regex: !prev.regex }))}
-              className={`w-6 h-6 flex items-center justify-center rounded text-[10px] transition-colors ${config.regex ? 'bg-blue-600 text-white shadow-inner' : 'text-gray-400 hover:bg-[#555]'}`}
-              title="使用正则表达式"
+              className={`w-6 h-6 flex items-center justify-center rounded text-[10px] transition-colors cursor-pointer ${config.regex ? 'bg-blue-600 text-white shadow-inner' : 'text-gray-400 hover:bg-[#555]'}`}
+              title="使用正则表达式 (Alt+R)"
             >
               .*
             </button>
           </div>
         </div>
+        {!isRegexValid && (
+          <div className="absolute -bottom-4 left-0 text-[9px] text-red-400">无效的正则表达式</div>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto custom-scrollbar">
@@ -123,17 +164,18 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({
         <div className="space-y-4">
           <div className="group">
             <div className="flex items-center text-[11px] text-blue-400 font-bold mb-1">
-              <svg className="w-3 h-3 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M13 10V3L4 14h7v7l9-11h-7z" strokeWidth="2"/></svg>
+              <svg className="w-3 h-3 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M13 10V3L4 14h7v7l9-11h-7z" strokeWidth=\"2\"/></svg>
               快捷键支持
             </div>
-            <p className="text-[10px] text-gray-500 leading-relaxed px-4.5">
-              按 <kbd className="bg-[#333] px-1 rounded border border-white/10 font-mono text-gray-300">Enter</kbd> 跳转到下一个结果。使用 <kbd className="bg-[#333] px-1 rounded border border-white/10 font-mono text-gray-300">Shift+Enter</kbd> 跳转到上一个。
-            </p>
+            <div className="text-[10px] text-gray-500 leading-relaxed px-4.5 space-y-1">
+              <p>按 <kbd className="bg-[#333] px-1 rounded border border-white/10 font-mono text-gray-300">Enter</kbd> 跳转到下一个。使用 <kbd className="bg-[#333] px-1 rounded border border-white/10 font-mono text-gray-300">Shift+Enter</kbd> 跳转到上一个。</p>
+              <p>使用 <kbd className="bg-[#333] px-1 rounded border border-white/10 font-mono text-gray-300">Alt + C/W/R</kbd> 快速切换搜索选项。</p>
+            </div>
           </div>
 
           <div className="group">
             <div className="flex items-center text-[11px] text-yellow-500 font-bold mb-1">
-              <svg className="w-3 h-3 mr-1.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/></svg>
+              <svg className="w-3 h-3 mr-1.5" fill="currentColor" viewBox="0 0 24 24"><path d=\"M12 2L2 7l10 5 10-5-10-5z\"/></svg>
               全局高亮
             </div>
             <p className="text-[10px] text-gray-500 leading-relaxed px-4.5">
@@ -143,7 +185,7 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({
 
           <div className="p-3 bg-blue-500/5 border border-blue-500/10 rounded-lg">
              <p className="text-[10px] text-blue-400 italic flex items-start">
-               <svg className="w-3 h-3 mr-1.5 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2.5" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+               <svg className="w-3 h-3 mr-1.5 mt-0.5 shrink-0\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path strokeWidth=\"2.5\" d=\"M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z\"/></svg>
                从图层面板使用“高亮图层”可创建永久的多颜色规则。
              </p>
           </div>

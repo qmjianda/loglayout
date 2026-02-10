@@ -20,7 +20,7 @@ except ImportError:
     tk = None
 
 from loglayer.registry import LayerRegistry
-from loglayer.core import LayerStage, LayerCategory
+from loglayer.core import LayerStage, LayerCategory, ProcessedLine
 from search_mixin import SearchMixin
 
 # Constants
@@ -238,7 +238,8 @@ class PipelineWorker(CustomThread):
                     is_visible = True
                     if logic_layers:
                         for layer in logic_layers:
-                            content = layer.process_line(content)
+                            res = layer.process_line(content)
+                            content = res.content if isinstance(res, ProcessedLine) else res
                             if not layer.filter_line(content, index=physical_idx):
                                 is_visible = False
                                 break
@@ -675,14 +676,29 @@ class FileBridge(SearchMixin):
                     # 1. 应用处理层的内容变换
                     highlights = []
                     row_style = {}
+                    # 只有 Transform 类型的图层允许修改内容
                     logic_layers = [l for l in session.layer_instances if l.stage == LayerStage.LOGIC]
-                    for layer in logic_layers: content = layer.process_line(content)
-                    
+                    current_offset_map = None
+
+                    for layer in logic_layers:
+                        res = layer.process_line(content)
+                        if isinstance(res, ProcessedLine):
+                            content = res.content
+                            # 这里可以累加 offset_map，如果多个转换层叠加
+                            if res.offset_map:
+                                current_offset_map = res.offset_map
+                        else:
+                            content = res
+
                     # 2. 应用渲染层的高亮和行样式
+                    # 此时渲染层面对的是已经过滤且转换后的 content
                     rendering_layers = getattr(session, 'rendering_instances', [])
                     for layer in reversed(rendering_layers):
                         hls = layer.highlight_line(content)
-                        if hls: highlights.extend(hls)
+                        if hls:
+                            # 如果未来需要将高亮映射回原始行，可以使用 current_offset_map
+                            highlights.extend(hls)
+
                         # 获取行样式 (如 RowTintLayer)
                         if hasattr(layer, 'get_row_style'):
                             style = layer.get_row_style(content, index=real_idx) if 'index' in layer.get_row_style.__code__.co_varnames else layer.get_row_style(content)

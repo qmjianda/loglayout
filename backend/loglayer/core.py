@@ -1,93 +1,114 @@
 
+from typing import List, Dict, Optional, Any
+from dataclasses import dataclass, field
 from .ui import Component
+
+@dataclass
+class ProcessedLine:
+    """处理后的行信息，包含内容和坐标映射"""
+    content: str
+    # 偏移量映射表 (可选): 用于处理高亮错位。
+    # 格式: {new_pos: old_pos}
+    offset_map: Optional[Dict[int, int]] = None
 
 class LayerCategory:
     """图层分类：处理层 vs 渲染层"""
-    PROCESSING = "processing"  # 数据处理层 (改变日志内容/可见性)
-    RENDERING = "rendering"    # 渲染增强层 (仅改变显示效果)
+    FILTERING = "filtering"      # 过滤层: 决定可见性 (只读内容)
+    TRANSFORM = "transform"      # 转换层: 修改内容 (如脱敏、替换)
+    RENDERING = "rendering"      # 渲染层: 增加装饰 (如高亮、样式)
+    # 兼容旧代码
+    PROCESSING = "transform"
 
 class LayerStage:
-    """图层执行阶段 (用于处理层内部细分)"""
+    """图层执行阶段"""
     NATIVE = "native"  # 使用 ripgrep 执行 (极速)
     LOGIC = "logic"    # 使用 Python 执行 (灵活)
 
 # ============================================================
-# 数据处理层基类
+# 1. 过滤层 (Filtering Layer) - 仅决定可见性
 # ============================================================
 
-class DataProcessingLayer(Component):
+class FilterLayer(Component):
     """
-    数据处理层基类。
-    这类图层会改变日志的可见性或内容。
-    - 修改后需要重新运行 PipelineWorker。
-    - 严格模式下，始终在渲染层之前执行。
+    过滤图层基类。
+    职责：决定一行日志是否应该被保留。
     """
-    category = LayerCategory.PROCESSING
+    category = LayerCategory.FILTERING
     stage = LayerStage.LOGIC
     icon = "filter"
-    
+
     def filter_line(self, content: str, index: int = -1) -> bool:
-        """
-        决定是否保留某行。
-        返回 True: 保留; 返回 False: 丢弃
-        """
+        """返回 True: 保留; 返回 False: 丢弃"""
         return True
 
-    def process_line(self, content: str) -> str:
-        """
-        变换行内容 (例如替换文本、脱敏)。
-        返回新的行内容。
-        """
-        return content
-
     def reset(self):
-        """在新的流水线开始前被调用，用于重置内部状态 (例如计数器)。"""
         pass
 
-
-class NativeProcessingLayer(DataProcessingLayer):
-    """
-    原生处理层基类。
-    使用 ripgrep 参数进行高性能过滤。
-    """
+class NativeFilterLayer(FilterLayer):
+    """高性能原生过滤层 (ripgrep)"""
     stage = LayerStage.NATIVE
-    
+
     def get_rg_args(self) -> list:
-        """返回 ripgrep 的命令行参数列表。"""
         return []
 
+# ============================================================
+# 2. 转换层 (Transformation Layer) - 修改内容
+# ============================================================
+
+class TransformLayer(Component):
+    """
+    转换图层基类。
+    职责：修改日志内容 (脱敏、格式化等)。
+    """
+    category = LayerCategory.TRANSFORM
+    icon = "replace"
+
+    def process_line(self, content: str) -> ProcessedLine:
+        """返回处理后的对象"""
+        return ProcessedLine(content=content)
 
 # ============================================================
-# 渲染增强层基类
+# 3. 渲染层 (Rendering Layer) - 视觉装饰
 # ============================================================
 
 class RenderingLayer(Component):
     """
     渲染增强层基类。
-    这类图层只改变显示效果，不影响日志内容或可见性。
-    - 修改后只需刷新渲染缓存，无需重跑 PipelineWorker。
-    - 严格模式下，始终在处理层之后执行。
+    职责：不改变内容，仅提供装饰信息。
     """
     category = LayerCategory.RENDERING
     icon = "highlight"
-    
+
     def highlight_line(self, content: str) -> list:
-        """
-        返回该行的高亮区域列表。
-        格式: [{"start": 0, "end": 5, "color": "#ff0000", "opacity": 100}]
-        """
+        """返回高亮区域列表"""
         return []
 
     def get_row_style(self, content: str) -> dict:
-        """
-        返回该行的样式配置。
-        格式: {"backgroundColor": "#ff000020", "borderLeft": "3px solid #ff0000"}
-        """
+        """返回整行样式"""
         return {}
 
+# ============================================================
+# 向后兼容定义
+# ============================================================
+
+class DataProcessingLayer(FilterLayer, TransformLayer):
+    """旧的处理层基类 (合并了过滤和转换)"""
+    category = "processing"
+
+    def process_line(self, content: str) -> Any:
+        # 为了兼容旧代码，这里可能返回 str 或 ProcessedLine
+        return content
+
+class NativeProcessingLayer(DataProcessingLayer):
+    stage = LayerStage.NATIVE
+    def get_rg_args(self) -> list: return []
+
+BaseLayer = DataProcessingLayer
+NativeLayer = NativeProcessingLayer
+PluginLayer = DataProcessingLayer
 
 # ============================================================
-# UI 扩展基类 (UI Extensions)
+# UI 挂件
 # ============================================================
 
 class UIWidget(Component):

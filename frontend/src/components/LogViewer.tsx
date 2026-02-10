@@ -47,6 +47,7 @@ export const LogViewer: React.FC<LogViewerProps> = ({
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
+  const [fontSize, setFontSize] = useState(12);
   const [viewportHeight, setViewportHeight] = useState(0);
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, text: string, lineIndex?: number } | null>(null);
   const [commentPopover, setCommentPopover] = useState<{ x: number, y: number, lineIndex: number, comment: string } | null>(null);
@@ -54,8 +55,9 @@ export const LogViewer: React.FC<LogViewerProps> = ({
   // 本地缓存：存储从后端读取的行数据
   const [bridgedLines, setBridgedLines] = useState<Map<number, LogLine | string>>(new Map());
   const lastFetchRef = useRef<{ start: number; end: number }>({ start: -1, end: -1 });
+  const lastAnchorRef = useRef<{ index: number; offset: number }>({ index: 0, offset: 0 });
 
-  const lineHeight = 20; // 每一行的高度
+  const lineHeight = Math.floor(fontSize * 1.5); // 每一行的高度
   const buffer = 50;     // 缓冲区行数，避免滚动太快时看到空白
   const VIRTUAL_HEIGHT_LIMIT = 10000000; // 虚拟高度上限 (1000万像素)，超过此高度开启缩放模式
 

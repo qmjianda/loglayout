@@ -3,7 +3,9 @@
     "allow": [
       "Bash(git add .)",
       "Bash(git commit -m \"$\\(cat <<''EOF''\nfix: improve search navigation and counter \\(Ctrl+F\\)\n\n- Jump immediately to the nearest result after a search is triggered\n- Fix match counter showing 0/Total until manual navigation\n- Robust handling of search ranks in useSearch hook\n- General cleanup of legacy tests and documentation\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
-      "Bash(git push origin main)"
+      "Bash(git push origin main)",
+      "Bash(gh pr list:*)",
+      "Bash(dir /s /b)"
     ]
   }
 }
