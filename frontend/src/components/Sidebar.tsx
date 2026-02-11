@@ -9,9 +9,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeView, onSetActiveView })
   const icons = [
     {
       id: 'main',
-      icon: <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />,
+      icon: (
+        <>
+          <path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z" />
+          <path d="M13 2v7h7" />
+        </>
+      ),
       label: '工作区',
-      fill: true
+      fill: false
     },
     {
       id: 'search',

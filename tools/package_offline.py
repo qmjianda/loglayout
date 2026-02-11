@@ -63,6 +63,10 @@ def package_app():
         if (root_dir / "README.md").exists():
             shutil.copy2(root_dir / "README.md", dist_dir / "README.md")
             print("Copied README.md")
+        # Copy requirements.txt to dist_dir
+        if (root_dir / "requirements.txt").exists():
+            shutil.copy2(root_dir / "requirements.txt", dist_dir / "requirements.txt")
+            print("Copied requirements.txt")
     except Exception as e:
         print(f"Failed to copy backend/README: {e}")
         sys.exit(1)
@@ -178,9 +182,6 @@ python3 app/main.py "$@"
     print("\n" + "="*40)
     print(f"Done! Offline package created at:\n{dist_dir.absolute()}")
     print("="*40)
-
-if __name__ == "__main__":
-    package_app()
 
 if __name__ == "__main__":
     package_app()

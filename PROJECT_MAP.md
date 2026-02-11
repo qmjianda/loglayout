@@ -49,6 +49,9 @@ graph TD
 
 | Date | Category | Key Updates & Fixes |
 | :--- | :--- | :--- |
+| **2026-02-11** | **Stability** | **Virtual Scroll Fix**: Unified `lineHeight` (20px) to resolve mapping drift in million-line files. |
+| | **Build/Fix** | **Compilation Fix**: Resolved SVG sync errors in frontend and corrupted `__init__.py` in backend. |
+| | **Feature** | **Dependency Management**: Added `requirements.txt` and `tools/install_deps.py` for easy setup. |
 | **2026-02-09** | **Core/Hook** | **Platform Detection**: Added backend-driven `usePlatformInfo` hook; removed `navigator.platform` dependencies. |
 | **2026-02-07** | **Feature** | **Bookmarks**: Persistent storage, comments support, and UI Popover. |
 | | **Architecture** | Extracted `useSearchLogic`, `useBookmarkLogic`, `SearchMixin`. Optimized cache (O(N)). |

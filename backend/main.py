@@ -282,6 +282,14 @@ def start_app():
 
     port = args.port
     
+    # Windows taskbar icon fix
+    if sys.platform == 'win32':
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("qmjianda.loglayer.v1")
+        except:
+            pass
+    
     # Start server in thread
     t = threading.Thread(target=run_server, args=(port,), daemon=True)
     t.start()
@@ -324,8 +332,15 @@ def start_app():
         window = webview.create_window('LogLayer', url, width=1200, height=800)
         # Pass window to bridge for native dialogs
         bridge.window = window
+        
+        # Set window icon
+        icon_path = os.path.join(base_dir, "assets", "icon.png")
+        if not os.path.exists(icon_path):
+             # Try fallback path for some environments
+             icon_path = os.path.join(os.getcwd(), "backend", "assets", "icon.png")
+             
         # Start webview
-        webview.start()
+        webview.start(icon=icon_path if os.path.exists(icon_path) else None)
     else:
         try:
             while True:

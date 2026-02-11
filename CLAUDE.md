@@ -11,6 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Build & Package
 - **Frontend Build**: `npm run build`
+- **Install All Dependencies**: `python tools/install_deps.py`
 - **Source Package (Win)**: `tools/package.bat`
 - **Standalone EXE (Win)**: `tools/package_exe.bat` (Requires `pyinstaller`)
 - **Source Package (Linux)**: `sh tools/package.sh`

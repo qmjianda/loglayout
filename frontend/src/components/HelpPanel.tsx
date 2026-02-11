@@ -24,7 +24,7 @@ export const HelpPanel: React.FC = () => {
             <ul className="text-xs text-gray-400 space-y-2 leading-relaxed">
               <li>• <b>打开文件</b>：点击侧边栏的 "Open File" 或直接将日志文件拖入窗口。</li>
               <li>• <b>打开文件夹</b>：点击 "Open Folder" 可将文件夹作为工作区打开，支持批量搜索与文件切换。</li>
-              <li>• <b>工作区记忆</b>：当您重新打开同一个文件夹时，之前打开的文件和配置的图层会自动恢复。</li>
+              <li>• <b>工作区记忆</b>：自动恢复之前打开的文件和配置的图层。</li>
             </ul>
           </div>
 
@@ -36,9 +36,34 @@ export const HelpPanel: React.FC = () => {
             </h3>
             <ul className="text-xs text-gray-400 space-y-2 leading-relaxed">
               <li>• <b>非破坏性分析</b>：通过叠加图层来分析日志，原始文件永远不会被修改。</li>
-              <li>• <b>FILTER</b>：过滤图层，只显示匹配关键词或正则的行。</li>
+              <li>• <b>FILTER</b>：过滤图层，只显示匹配行。</li>
               <li>• <b>HIGHLIGHT</b>：高亮图层，用颜色标记关注的关键词。</li>
-              <li>• <b>LEVEL</b>：等级图层，快速筛选 ERROR/WARN 等特定日志等级。</li>
+            </ul>
+          </div>
+
+          {/* Bookmarks Card */}
+          <div className="bg-[#252526] p-5 rounded-lg border border-white/5 hover:border-yellow-500/30 transition-colors">
+            <h3 className="text-sm font-bold text-white mb-3 flex items-center">
+              <span className="w-6 h-6 rounded-md bg-yellow-500/20 text-yellow-400 flex items-center justify-center mr-2 text-xs">3</span>
+              书签与标注 (Bookmarks)
+            </h3>
+            <ul className="text-xs text-gray-400 space-y-2 leading-relaxed">
+              <li>• <b>快速标记</b>：点击行号左侧区域可快速添加/删除书签。</li>
+              <li>• <b>备注说明</b>：在侧边栏书签面板中，您可以为关键行添加自定义备注。</li>
+              <li>• <b>极速跳转</b>：使用 F2 / Shift+F2 在书签间快速穿梭。</li>
+            </ul>
+          </div>
+
+          {/* Performance Card */}
+          <div className="bg-[#252526] p-5 rounded-lg border border-white/5 hover:border-green-500/30 transition-colors">
+            <h3 className="text-sm font-bold text-white mb-3 flex items-center">
+              <span className="w-6 h-6 rounded-md bg-green-500/20 text-green-400 flex items-center justify-center mr-2 text-xs">4</span>
+              性能与核心
+            </h3>
+            <ul className="text-xs text-gray-400 space-y-2 leading-relaxed">
+              <li>• <b>GB 级秒开</b>：基于 mmap 的高效索引技术。</li>
+              <li>• <b>虚拟化渲染</b>：无论文件多大，内存占用始终保持稳定。</li>
+              <li>• <b>Native 桥接</b>：深度集成的 Rust/Python 后端处理引擎。</li>
             </ul>
           </div>
         </div>
@@ -87,27 +112,35 @@ export const HelpPanel: React.FC = () => {
 
             <div className="grid grid-cols-2 gap-4">
               <div className="bg-black/30 p-3 rounded border border-white/5 flex justify-between items-center">
-                <span className="text-xs text-gray-400">撤销操作</span>
-                <span className="text-xs font-mono bg-white/10 px-2 py-1 rounded text-gray-200">Ctrl + Z</span>
-              </div>
-              <div className="bg-black/30 p-3 rounded border border-white/5 flex justify-between items-center">
-                <span className="text-xs text-gray-400">重做操作</span>
-                <span className="text-xs font-mono bg-white/10 px-2 py-1 rounded text-gray-200">Ctrl + Y</span>
-              </div>
-              <div className="bg-black/30 p-3 rounded border border-white/5 flex justify-between items-center">
-                <span className="text-xs text-gray-400">查找</span>
+                <span className="text-xs text-gray-400">查找匹配</span>
                 <span className="text-xs font-mono bg-white/10 px-2 py-1 rounded text-gray-200">Ctrl + F</span>
               </div>
               <div className="bg-black/30 p-3 rounded border border-white/5 flex justify-between items-center">
                 <span className="text-xs text-gray-400">跳转行号</span>
                 <span className="text-xs font-mono bg-white/10 px-2 py-1 rounded text-gray-200">Ctrl + G</span>
               </div>
+              <div className="bg-black/30 p-3 rounded border border-white/5 flex justify-between items-center">
+                <span className="text-xs text-gray-400">下一个书签</span>
+                <span className="text-xs font-mono bg-white/10 px-2 py-1 rounded text-gray-200">F2</span>
+              </div>
+              <div className="bg-black/30 p-3 rounded border border-white/5 flex justify-between items-center">
+                <span className="text-xs text-gray-400">上一个书签</span>
+                <span className="text-xs font-mono bg-white/10 px-2 py-1 rounded text-gray-200">Shift + F2</span>
+              </div>
+              <div className="bg-black/30 p-3 rounded border border-white/5 flex justify-between items-center">
+                <span className="text-xs text-gray-400">撤销 / 重做</span>
+                <span className="text-xs font-mono bg-white/10 px-2 py-1 rounded text-gray-200">Ctrl + Z / Y</span>
+              </div>
+              <div className="bg-black/30 p-3 rounded border border-white/5 flex justify-between items-center">
+                <span className="text-xs text-gray-400">侧边栏切换</span>
+                <span className="text-xs font-mono bg-white/10 px-2 py-1 rounded text-gray-200">Ctrl + B</span>
+              </div>
             </div>
           </section>
 
           <footer className="text-center pt-10 opacity-30">
             <div className="text-[10px] font-mono tracking-widest uppercase">
-              LogLayer v5.0 • 高效日志分析体验
+              LogLayer v5.1 • 高效日志分析体验
             </div>
           </footer>
         </div>

@@ -93,14 +93,14 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({
                 className="p-1 hover:bg-[#3c3c3c] rounded text-gray-400 hover:text-white transition-colors cursor-pointer"
                 title="上一个匹配项 (Shift+Enter)"
               >
-                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 15l7-7 7 7"/></svg>
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 15l7-7 7 7" /></svg>
               </button>
               <button
                 onClick={() => onNavigate?.('next')}
                 className="p-1 hover:bg-[#3c3c3c] rounded text-gray-400 hover:text-white transition-colors cursor-pointer"
                 title="下一个匹配项 (Enter)"
               >
-                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 9l-7 7-7-7"/></svg>
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 9l-7 7-7-7" /></svg>
               </button>
             </div>
           </div>
@@ -108,9 +108,8 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({
       </div>
 
       <div className="relative group mb-4">
-        <div className={`relative flex items-center bg-[#3c3c3c] border transition-all rounded overflow-hidden ${
-          !isRegexValid ? 'border-red-500/50' : (inputValue ? 'border-blue-500/50' : 'border-transparent')
-        }`}>
+        <div className={`relative flex items-center bg-[#3c3c3c] border transition-all rounded overflow-hidden ${!isRegexValid ? 'border-red-500/50' : (inputValue ? 'border-blue-500/50' : 'border-transparent')
+          }`}>
           <input
             ref={inputRef}
             type="text"
@@ -128,7 +127,7 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({
                 className="w-5 h-5 flex items-center justify-center text-gray-500 hover:text-white cursor-pointer"
                 title="清除"
               >
-                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="3" d="M6 18L18 6M6 6l12 12"/></svg>
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="3" d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             )}
             <button
@@ -143,7 +142,7 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({
               className={`w-6 h-6 flex items-center justify-center rounded text-[10px] transition-colors cursor-pointer ${config.wholeWord ? 'bg-blue-600 text-white shadow-inner' : 'text-gray-400 hover:bg-[#555]'}`}
               title="全字匹配 (Alt+W)"
             >
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2.5" d="M3 12h18M3 6h18M3 18h18"/></svg>
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2.5" d="M3 12h18M3 6h18M3 18h18" /></svg>
             </button>
             <button
               onClick={() => setConfig(prev => ({ ...prev, regex: !prev.regex }))}
@@ -164,7 +163,7 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({
         <div className="space-y-4">
           <div className="group">
             <div className="flex items-center text-[11px] text-blue-400 font-bold mb-1">
-              <svg className="w-3 h-3 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M13 10V3L4 14h7v7l9-11h-7z" strokeWidth=\"2\"/></svg>
+              <svg className="w-3 h-3 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M13 10V3L4 14h7v7l9-11h-7z" strokeWidth="2" /></svg>
               快捷键支持
             </div>
             <div className="text-[10px] text-gray-500 leading-relaxed px-4.5 space-y-1">
@@ -175,7 +174,7 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({
 
           <div className="group">
             <div className="flex items-center text-[11px] text-yellow-500 font-bold mb-1">
-              <svg className="w-3 h-3 mr-1.5" fill="currentColor" viewBox="0 0 24 24"><path d=\"M12 2L2 7l10 5 10-5-10-5z\"/></svg>
+              <svg className="w-3 h-3 mr-1.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z" /></svg>
               全局高亮
             </div>
             <p className="text-[10px] text-gray-500 leading-relaxed px-4.5">
@@ -184,10 +183,10 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({
           </div>
 
           <div className="p-3 bg-blue-500/5 border border-blue-500/10 rounded-lg">
-             <p className="text-[10px] text-blue-400 italic flex items-start">
-               <svg className="w-3 h-3 mr-1.5 mt-0.5 shrink-0\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path strokeWidth=\"2.5\" d=\"M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z\"/></svg>
-               从图层面板使用“高亮图层”可创建永久的多颜色规则。
-             </p>
+            <p className="text-[10px] text-blue-400 italic flex items-start">
+              <svg className="w-3 h-3 mr-1.5 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2.5" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              从图层面板使用“高亮图层”可创建永久的多颜色规则。
+            </p>
           </div>
         </div>
       </div>
