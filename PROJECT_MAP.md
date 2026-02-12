@@ -25,7 +25,7 @@ graph TD
 | **API Server** | `backend/main.py` | FastAPI app, REST/WS routes, **Bookmark API**, pywebview integration | `fastapi`, `uvicorn`, `pywebview` |
 | **Bridge Client** | `frontend/src/bridge_client.ts` | Frontend API, Bookmark & Layer registry access | `fetch`, `WebSocket` |
 | **Dynamic UI** | `frontend/src/components/DynamicUI/` | `InputMapper`, `DynamicForm`: Schema-driven configuration UI | `types.ts` |
-| **Log Viewer** | `frontend/src/components/LogViewer.tsx` | Virtual list, scroll scaling, processed line rendering | `bridge_client.ts` |
+| **Log Viewer** | `frontend/src/components/LogViewer.tsx` | High-performance HTML5 Canvas rendering, virtual scroll scaling | `bridge_client.ts` |
 | **State Orchest.** | `frontend/src/App.tsx` | Global file state, UI layout, hook management | All Components |
 | **Tests & Logs** | `tests/` | Unit tests, scale tests, and **test log samples** | `pytest`, `tests/logs/` |
 | **Dev Tools** | `tools/` | Build and packaging scripts | `PyInstaller`, `npm` |
@@ -49,6 +49,9 @@ graph TD
 
 | Date | Category | Key Updates & Fixes |
 | :--- | :--- | :--- |
+| **2026-02-12** | **UX/Fix** | **Selection Rendering**: Fixed start position and character range for reversed (bottom-to-top) selections in LogViewer. |
+| | **Search/Fix** | **Ctrl+F Auto-fill**: Canvas selections now automatically populate the search box via `onSelectedTextChange`. |
+| | **Stability/Fix** | **Bookmark Previews**: Fixed the "Loading..." hang by triggering preview refreshes following toggle and comment updates. |
 | **2026-02-11** | **Stability** | **Virtual Scroll Fix**: Unified `lineHeight` (20px) to resolve mapping drift in million-line files. |
 | | **Build/Fix** | **Compilation Fix**: Resolved SVG sync errors in frontend and corrupted `__init__.py` in backend. |
 | | **Feature** | **Dependency Management**: Added `requirements.txt` and `tools/install_deps.py` for easy setup. |

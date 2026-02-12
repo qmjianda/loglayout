@@ -7,6 +7,14 @@ import uvicorn
 import webview
 import argparse
 import time
+
+# Windows asyncio fix for [WinError 10054]
+if sys.platform == 'win32':
+    try:
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    except:
+        pass
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Body, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse

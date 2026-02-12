@@ -14,6 +14,7 @@ export interface UseUIStateProps {
     redo: () => void;
     setSearchQuery: (query: string) => void;
     searchQuery: string;
+    canvasSelectedText?: string;
     // 书签导航回调
     onNavigateToNextBookmark?: () => void;
     onNavigateToPrevBookmark?: () => void;
@@ -64,6 +65,7 @@ export function useUIState({
     redo,
     setSearchQuery,
     searchQuery,
+    canvasSelectedText,
     onNavigateToNextBookmark,
     onNavigateToPrevBookmark
 }: UseUIStateProps): UseUIStateReturn {
@@ -108,9 +110,10 @@ export function useUIState({
                 redo();
             } else if (isCmdOrCtrl && isF) {
                 e.preventDefault();
-                const selection = window.getSelection()?.toString();
-                if (selection) {
-                    const firstLine = selection.split(/\r?\n/)[0].trim();
+                // Use canvas selection first, then fall back to native browser selection
+                const selText = canvasSelectedText || window.getSelection()?.toString() || '';
+                if (selText) {
+                    const firstLine = selText.split(/\r?\n/)[0].trim();
                     if (firstLine) {
                         setSearchQuery(firstLine);
                     }
@@ -135,7 +138,7 @@ export function useUIState({
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [undo, redo, isFindVisible, isGoToLineVisible, setSearchQuery, onNavigateToNextBookmark, onNavigateToPrevBookmark]);
+    }, [undo, redo, isFindVisible, isGoToLineVisible, setSearchQuery, canvasSelectedText, onNavigateToNextBookmark, onNavigateToPrevBookmark]);
 
     // Jump to line
     const handleJumpToLine = useCallback((index: number, totalLines: number) => {

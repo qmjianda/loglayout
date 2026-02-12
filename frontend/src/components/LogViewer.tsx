@@ -3,34 +3,61 @@ import { LogLine, LayerType } from '../types';
 import { readProcessedLines } from '../bridge_client';
 import { BookmarkPopover } from './BookmarkPopover';
 
-/**
- * LogViewer - 核心日志渲染组件
- * 
- * 关键特性：
- * 1. 虚拟滚动 (Virtual Scrolling): 只渲染视口内的行，支持超大文件（GB 级）。
- * 2. 滚动缩放 (Scroll Scaling): 绕过浏览器 ~33M 像素的高度限制，支持千万行日志。
- * 3. 异步加载: 通过桥接层按需从 Python 后端拉取处理后的行数据。
- * 4. 高亮渲染: 支持多重着色方案（搜索匹配、图层高亮）。
- */
-
 interface LogViewerProps {
-  // 数据源信息
-  totalLines: number; // 当前可见的总行数（过滤后的）
+  totalLines: number;
   fileId: string | null;
-
-  // 交互控制
   searchQuery: string;
   searchConfig: { regex: boolean; caseSensitive: boolean; wholeWord?: boolean };
-  scrollToIndex?: number | null; // 强制滚动到某一行
-  highlightedIndex?: number | null; // 当前高亮的行索引（虚拟索引）
+  scrollToIndex?: number | null;
+  highlightedIndex?: number | null;
   onLineClick?: (index: number) => void;
   onAddLayer?: (type: LayerType, config?: any) => void;
   onVisibleRangeChange?: (startIndex: number, endIndex: number) => void;
   onToggleBookmark?: (lineIndex: number) => void;
   onUpdateBookmarkComment?: (lineIndex: number, comment: string) => void;
-  updateTrigger?: number; // 外部触发器，用于强制刷新缓存
+  onSelectedTextChange?: (text: string) => void;
+  updateTrigger?: number;
+  layerStats?: Record<string, { count: number, distribution: number[] }>;
+  bookmarks?: Record<number, string>;
 }
 
+/**
+ * Normalize selection to top-to-bottom order regardless of drag direction.
+ * Returns { topLine, topChar, bottomLine, bottomChar }.
+ */
+function normalizeSelection(sel: { startLine: number; startChar: number; endLine: number; endChar: number }) {
+  if (sel.startLine < sel.endLine || (sel.startLine === sel.endLine && sel.startChar <= sel.endChar)) {
+    return { topLine: sel.startLine, topChar: sel.startChar, bottomLine: sel.endLine, bottomChar: sel.endChar };
+  }
+  return { topLine: sel.endLine, topChar: sel.endChar, bottomLine: sel.startLine, bottomChar: sel.startChar };
+}
+
+/**
+ * Get the character range [s, e) for a given line index within a normalized selection.
+ */
+function getLineSelectionRange(i: number, norm: ReturnType<typeof normalizeSelection>, contentLength: number) {
+  let s = 0, e = contentLength;
+  if (norm.topLine === norm.bottomLine) {
+    s = norm.topChar;
+    e = norm.bottomChar;
+  } else if (i === norm.topLine) {
+    s = norm.topChar;
+    // e stays contentLength (select to end of line)
+  } else if (i === norm.bottomLine) {
+    e = norm.bottomChar;
+    // s stays 0 (select from start of line)
+  }
+  // else: middle line, s=0, e=contentLength (entire line)
+  return { s, e };
+}
+
+/**
+ * LogViewer - Canvas-based Redesign
+ *
+ * Performance Optimized: Uses HTML5 Canvas for rendering millions of lines.
+ * Hybrid Scroll: Native OS scrolling with Canvas drawing.
+ * High-DPI: Sharp rendering on all displays.
+ */
 export const LogViewer: React.FC<LogViewerProps> = ({
   totalLines,
   fileId,
@@ -43,133 +70,61 @@ export const LogViewer: React.FC<LogViewerProps> = ({
   onVisibleRangeChange,
   onToggleBookmark,
   onUpdateBookmarkComment,
-  updateTrigger
+  onSelectedTextChange,
+  updateTrigger,
+  layerStats = {},
+  bookmarks = {}
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
   const [scrollTop, setScrollTop] = useState(0);
-  const [fontSize, setFontSize] = useState(12);
+  const [scrollLeft, setScrollLeft] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
+  const [viewportWidth, setViewportWidth] = useState(0);
+  const [maxLineWidth, setMaxLineWidth] = useState(viewportWidth);
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, text: string, lineIndex?: number } | null>(null);
   const [commentPopover, setCommentPopover] = useState<{ x: number, y: number, lineIndex: number, comment: string } | null>(null);
 
-  // 本地缓存：存储从后端读取的行数据
+  const [selection, setSelection] = useState<{
+    startLine: number, startChar: number,
+    endLine: number, endChar: number
+  } | null>(null);
+  const [isSelecting, setIsSelecting] = useState(false);
+  const [hoveredLineIndex, setHoveredLineIndex] = useState<number | null>(null);
+
   const [bridgedLines, setBridgedLines] = useState<Map<number, LogLine | string>>(new Map());
   const lastFetchRef = useRef<{ start: number; end: number }>({ start: -1, end: -1 });
-  const lastAnchorRef = useRef<{ index: number; offset: number }>({ index: 0, offset: 0 });
 
-  const lineHeight = Math.floor(fontSize * 1.5); // 每一行的高度
-  const buffer = 50;     // 缓冲区行数，避免滚动太快时看到空白
-  const VIRTUAL_HEIGHT_LIMIT = 10000000; // 虚拟高度上限 (1000万像素)，超过此高度开启缩放模式
+  const lineHeight = 20;
+  const gutterWidth = 80;
+  const VIRTUAL_HEIGHT_LIMIT = 10000000;
 
   const realTotalHeight = totalLines * lineHeight;
   const useScrollScaling = realTotalHeight > VIRTUAL_HEIGHT_LIMIT;
-  // 缩放因子：将庞大的实际高度映射到有限的浏览器显示高度
+  // 针对大文件增加缓冲区，防止滚动太快出现空白，增加到 500 行以应对快速滚动
+  const buffer = useScrollScaling ? 500 : 200;
   const scaleFactor = useScrollScaling ? VIRTUAL_HEIGHT_LIMIT / realTotalHeight : 1;
-  const virtualTotalHeight = useScrollScaling ? VIRTUAL_HEIGHT_LIMIT : realTotalHeight;
+  // 在总高度基础上增加 100px 的留白，提供更宽裕的底部空间
+  const virtualTotalHeight = (useScrollScaling ? VIRTUAL_HEIGHT_LIMIT : realTotalHeight) + 100;
 
-  // 当文件 id 变化时（切换文件），彻底清空缓存，防止显示上一个文件的内容
+  const charWidthRef = useRef(7.22);
+  const font = '12px "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
+
   useEffect(() => {
-    setBridgedLines(new Map());
-    lastFetchRef.current = { start: -1, end: -1 };
-  }, [fileId]);
-
-  // 当外部触发器改变（如清空搜索、切换图层、刷新）时，保留本地缓存（stale-while-revalidate），
-  // 仅重置抓取状态以强制重新获取最新数据。这样可以避免数据到达前的白屏闪烁。
-  useEffect(() => {
-    lastFetchRef.current = { start: -1, end: -1 };
-  }, [updateTrigger]);
-
-  // 计算可见范围（考虑缩放模式）
-  const maxPhysicalScroll = virtualTotalHeight - viewportHeight;
-  const maxLogicalScroll = realTotalHeight - viewportHeight;
-
-  // 核心公式：将 DOM 的 scrollTop 映射到逻辑上的有效滚动位置
-  const effectiveScrollTop = useScrollScaling && maxPhysicalScroll > 0
-    ? (scrollTop / maxPhysicalScroll) * maxLogicalScroll
-    : scrollTop;
-
-  const startIndex = Math.max(0, Math.floor(effectiveScrollTop / lineHeight) - buffer);
-  const endIndex = Math.min(totalLines, Math.floor((effectiveScrollTop + viewportHeight) / lineHeight) + buffer);
-
-  /**
-   * 按需从后端拉取行数据。
-   */
-  useEffect(() => {
-    if (!fileId || totalLines === 0) return;
-
-    // 避免重复请求相同的范围
-    const fetchStart = startIndex;
-    const fetchEnd = endIndex;
-
-    if (fetchStart === lastFetchRef.current.start && fetchEnd === lastFetchRef.current.end) {
-      return;
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.font = font;
+      charWidthRef.current = ctx.measureText('M').width;
     }
+  }, []);
 
-    lastFetchRef.current = { start: fetchStart, end: fetchEnd };
-
-    let ignore = false;
-    const timer = setTimeout(async () => {
-      try {
-        const count = fetchEnd - fetchStart;
-        if (count <= 0 || ignore) return;
-
-        // batch 读取：一次性拉取整个可见窗口的内容
-        const lines = await readProcessedLines(fileId, fetchStart, count);
-        if (ignore) return;
-
-        setBridgedLines(prev => {
-          const next = new Map(prev);
-          lines.forEach((line, idx) => {
-            next.set(fetchStart + idx, line);
-          });
-
-          // 缓存淘汰逻辑：基于距离的淘汰 (Distance-based Eviction)
-          // 替换原有的 O(N log N) 排序策略，改为 O(N) 扫描，提升大文件滚动性能
-          if (next.size > 5000) {
-            const center = Math.floor((startIndex + endIndex) / 2);
-            const THRESHOLD = 3000; // 距离中心点多远会被移除
-
-            for (const key of next.keys()) {
-              if (Math.abs(Number(key) - center) > THRESHOLD) {
-                next.delete(key);
-              }
-            }
-
-            // 二次检查：如果仍然过多（比如跳跃滚动后），强制移除一部分
-            if (next.size > 5000) {
-              // 兜底策略：使用迭代器移除前 1000 个（Map 的迭代顺序通常是插入顺序，虽然不严格保证但足够快）
-              let removed = 0;
-              for (const key of next.keys()) {
-                next.delete(key);
-                removed++;
-                if (removed > 1000) break;
-              }
-            }
-          }
-
-          return next;
-        });
-      } catch (e) {
-        if (!ignore) console.error('Failed to fetch lines:', e);
-      }
-    }, 10); // 微调延时，防止高频滚动导致请求堆积
-
-    return () => {
-      ignore = true;
-      clearTimeout(timer);
-    };
-  }, [startIndex, endIndex, fileId, totalLines, updateTrigger]);
-
-  // 从本地缓存获取一行内容
-  const getLine = useCallback((index: number): LogLine | string => {
-    return bridgedLines.get(index) || '';
-  }, [bridgedLines]);
-
-  // 监听容器大小变化
   useEffect(() => {
     const handleResize = () => {
       if (containerRef.current) {
         setViewportHeight(containerRef.current.clientHeight);
+        setViewportWidth(containerRef.current.clientWidth);
       }
     };
     handleResize();
@@ -177,302 +132,487 @@ export const LogViewer: React.FC<LogViewerProps> = ({
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  /**
-   * 跳转到指定行。
-   * 会自动计算相应的逻辑滚动位置和缩放后的物理滚动位置。
-   */
+  const maxPhysicalScroll = Math.max(0, virtualTotalHeight - viewportHeight);
+  const maxLogicalScroll = Math.max(0, realTotalHeight - viewportHeight);
+  const effectiveScrollTop = useScrollScaling && maxPhysicalScroll > 0
+    ? (scrollTop / maxPhysicalScroll) * maxLogicalScroll
+    : scrollTop;
+
+  const startIndex = Math.max(0, Math.floor(effectiveScrollTop / lineHeight) - buffer);
+  const endIndex = Math.min(totalLines, Math.ceil((effectiveScrollTop + viewportHeight) / lineHeight) + buffer);
+
+  useEffect(() => {
+    setBridgedLines(new Map());
+    lastFetchRef.current = { start: -1, end: -1 };
+  }, [fileId]);
+
+  useEffect(() => {
+    lastFetchRef.current = { start: -1, end: -1 };
+  }, [updateTrigger]);
+
+  useEffect(() => {
+    if (!fileId || totalLines === 0) return;
+    if (startIndex === lastFetchRef.current.start && endIndex === lastFetchRef.current.end) return;
+
+    lastFetchRef.current = { start: startIndex, end: endIndex };
+    let ignore = false;
+
+    const timer = setTimeout(async () => {
+      try {
+        const count = endIndex - startIndex;
+        if (count <= 0 || ignore) return;
+        const lines = await readProcessedLines(fileId, startIndex, count);
+        if (ignore) return;
+
+        setBridgedLines(prev => {
+          const next = new Map(prev);
+          let newMaxInnerWidth = maxLineWidth;
+          lines.forEach((line, idx) => {
+            const lineIdx = startIndex + idx;
+            next.set(lineIdx, line);
+
+            // 跟踪最大行宽
+            const content = typeof line === 'string' ? line : line.content || '';
+            const lineW = content.length * charWidthRef.current + gutterWidth + 100;
+            if (lineW > newMaxInnerWidth) newMaxInnerWidth = lineW;
+          });
+
+          if (newMaxInnerWidth > maxLineWidth) setMaxLineWidth(newMaxInnerWidth);
+
+          if (next.size > 5000) {
+            const center = Math.floor((startIndex + endIndex) / 2);
+            for (const key of next.keys()) {
+              if (Math.abs(Number(key) - center) > 3000) next.delete(key);
+            }
+          }
+          return next;
+        });
+      } catch (e) { console.error('Failed to fetch lines:', e); }
+    }, 10);
+
+    return () => { ignore = true; clearTimeout(timer); };
+  }, [startIndex, endIndex, fileId, totalLines, updateTrigger]);
+
+  useEffect(() => {
+    onVisibleRangeChange?.(startIndex, endIndex);
+  }, [startIndex, endIndex, onVisibleRangeChange]);
+
   useEffect(() => {
     if (scrollToIndex !== null && scrollToIndex !== undefined && containerRef.current) {
-      const maxPhysicalScroll = virtualTotalHeight - viewportHeight;
-      const maxLogicalScroll = realTotalHeight - viewportHeight;
       const targetLogicalScroll = Math.max(0, scrollToIndex * lineHeight - (viewportHeight / 3));
       const targetPhysicalScroll = useScrollScaling && maxLogicalScroll > 0
         ? (targetLogicalScroll / maxLogicalScroll) * maxPhysicalScroll
         : targetLogicalScroll;
       containerRef.current.scrollTo({ top: targetPhysicalScroll, behavior: 'auto' });
     }
-  }, [scrollToIndex, totalLines, viewportHeight, useScrollScaling, scaleFactor]);
+  }, [scrollToIndex, totalLines, viewportHeight, useScrollScaling, maxLogicalScroll, maxPhysicalScroll]);
 
-  /**
-   * 修复缩放模式下的滚动手感。
-   * 在缩放模式下（大文件），正常的滚轮步进会被缩小太多，导致滚动极其缓慢。
-   * 这里拦截 wheel 事件，根据缩放因子补偿滚动增量。
-   */
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container || !useScrollScaling) return;
-
-    const handleWheel = (e: WheelEvent) => {
-      if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
-        e.preventDefault();
-        container.scrollTop += e.deltaY * scaleFactor;
-      }
-    };
-
-    container.addEventListener('wheel', handleWheel, { passive: false });
-    return () => container.removeEventListener('wheel', handleWheel);
-  }, [useScrollScaling, scaleFactor]);
-
-  // 处理右键菜单
-  const handleContextMenu = (e: React.MouseEvent, index?: number) => {
-    e.preventDefault();
-    const selection = window.getSelection();
-    const selectedText = selection?.toString().trim() || '';
-
-    setContextMenu({
-      x: e.clientX,
-      y: e.clientY,
-      text: selectedText,
-      lineIndex: index
-    });
+  const getPosFromEvent = (e: MouseEvent | React.MouseEvent) => {
+    if (!containerRef.current) return null;
+    const rect = containerRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const logicalY = y + effectiveScrollTop;
+    const lineIndex = Math.floor(logicalY / lineHeight);
+    const charIndex = Math.floor(Math.max(0, x - gutterWidth + scrollLeft) / charWidthRef.current);
+    return { lineIndex, charIndex, x, y };
   };
 
-  const handleCopy = (text: string) => {
-    navigator.clipboard.writeText(text);
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    const pos = getPosFromEvent(e);
+    if (!pos) return;
+    setSelection({ startLine: pos.lineIndex, startChar: pos.charIndex, endLine: pos.lineIndex, endChar: pos.charIndex });
+    setIsSelecting(true);
     setContextMenu(null);
   };
 
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if ((e.target as HTMLElement).closest('.context-menu-popup')) return;
-      setContextMenu(null);
-    };
-    window.addEventListener('mousedown', handleClickOutside);
-    return () => window.removeEventListener('mousedown', handleClickOutside);
+  const handleMouseMove = useCallback((e: MouseEvent) => {
+    if (!isSelecting) return;
+    const pos = getPosFromEvent(e);
+    if (!pos) return;
+    setSelection(prev => prev ? { ...prev, endLine: pos.lineIndex, endChar: pos.charIndex } : null);
+  }, [isSelecting, effectiveScrollTop]);
+
+  const handleMouseUp = useCallback(() => {
+    setIsSelecting(false);
   }, []);
 
-  const handleUpdateComment = async (lineIndex: number, comment: string) => {
-    if (onUpdateBookmarkComment) {
-      await onUpdateBookmarkComment(lineIndex, comment);
-    }
-    setCommentPopover(null);
-  };
-
-  // 通知父组件当前的可见范围（可用于同步统计等）
   useEffect(() => {
-    onVisibleRangeChange?.(startIndex, endIndex);
-  }, [startIndex, endIndex, onVisibleRangeChange]);
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [handleMouseMove, handleMouseUp]);
 
-  /**
-   * 渲染带高亮的每一行内容。
-   * 将 backend 返回的高亮段 (start, end, color) 进行分段渲染。
-   */
-  const renderLineContent = (line: LogLine | string) => {
-    if (typeof line === 'string') return <span>{line}</span>;
-    if (!line) return <span></span>;
-    const content = line.displayContent || line.content || '';
-    if (!line.highlights || line.highlights.length === 0) return <span>{content}</span>;
+  // Custom wheel handler: normalize each tick to exactly 3 lines
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const linesToScroll = 3;
+      // Calculate logical delta in pixels (3 lines)
+      const logicalDelta = Math.sign(e.deltaY) * linesToScroll * lineHeight;
+      // Convert to physical scroll delta when scaling is active
+      const physicalDelta = useScrollScaling && maxLogicalScroll > 0
+        ? (logicalDelta / maxLogicalScroll) * maxPhysicalScroll
+        : logicalDelta;
+      container.scrollTop += physicalDelta;
+    };
+    container.addEventListener('wheel', onWheel, { passive: false });
+    return () => container.removeEventListener('wheel', onWheel);
+  }, [useScrollScaling, maxLogicalScroll, maxPhysicalScroll, lineHeight]);
 
-    // 按起始位置排序
-    const sorted = [...line.highlights].sort((a, b) => a.start - b.start || b.end - a.end);
-    const elements: React.ReactNode[] = [];
-    let lastIndex = 0;
+  const handleClick = (e: React.MouseEvent) => {
+    const pos = getPosFromEvent(e);
+    if (!pos) return;
 
-    for (let i = 0; i < sorted.length; i++) {
-      const h = sorted[i];
-      if (h.start >= content.length) break;
-      if (h.start < lastIndex) continue;
-      if (h.start > lastIndex) {
-        elements.push(<span key={`t-${i}`}>{content.substring(lastIndex, h.start)}</span>);
+    if (pos.x < gutterWidth) {
+      const line = bridgedLines.get(pos.lineIndex);
+      const isLogLine = line && typeof line !== 'string';
+      const logLine = isLogLine ? (line as LogLine) : null;
+      const originalIndex = logLine ? logLine.index : pos.lineIndex;
+
+      if (pos.x < 30 && logLine?.isMarked) {
+        const rect = containerRef.current!.getBoundingClientRect();
+        setCommentPopover({
+          x: rect.left + gutterWidth,
+          y: e.clientY,
+          lineIndex: originalIndex,
+          comment: logLine.bookmarkComment || ''
+        });
+      } else {
+        onToggleBookmark?.(originalIndex);
       }
-      const opacity = (h.opacity || 100) / 100;
-      const end = Math.min(h.end, content.length);
-      // 如果是搜索命中或者是特定黄色，使用深色文字以保证对比度
-      const isSearchMatch = (h as any).isSearch || h.color === '#facc15';
-      elements.push(
-        <span key={`h-${i}`} style={{
-          backgroundColor: h.color.startsWith('#') ? `${h.color}${Math.floor(opacity * 255).toString(16).padStart(2, '0')}` : h.color,
-          color: isSearchMatch ? '#333' : '#fff',
-          padding: '0 1px',
-          borderRadius: '1px',
-          fontWeight: isSearchMatch ? 'bold' : 'normal'
-        }}>{content.substring(h.start, end)}</span>
-      );
-      lastIndex = end;
+    } else {
+      if (!selection || (selection.startLine === selection.endLine && Math.abs(selection.startChar - selection.endChar) < 2)) {
+        onLineClick?.(pos.lineIndex);
+      }
     }
-    if (lastIndex < content.length) {
-      elements.push(<span key="end">{content.substring(lastIndex)}</span>);
-    }
-    return elements;
   };
 
-  // 生成可见行列表
-  const visibleLines: (LogLine | string)[] = [];
-  for (let i = startIndex; i < endIndex; i++) {
-    visibleLines.push(getLine(i));
-  }
+  // Report selected text to parent (for Ctrl+F auto-fill etc.)
+  useEffect(() => {
+    if (!selection || !onSelectedTextChange) return;
+    const norm = normalizeSelection(selection);
+    if (norm.topLine === norm.bottomLine && norm.topChar === norm.bottomChar) {
+      onSelectedTextChange('');
+      return;
+    }
+    let text = '';
+    for (let i = norm.topLine; i <= norm.bottomLine; i++) {
+      const line = bridgedLines.get(i);
+      const content = typeof line === 'string' ? line : (line as LogLine)?.content || '';
+      const { s, e } = getLineSelectionRange(i, norm, content.length);
+      text += content.substring(s, e) + (i === norm.bottomLine ? '' : '\n');
+    }
+    onSelectedTextChange(text.trim());
+  }, [selection, bridgedLines, onSelectedTextChange]);
+
+  useEffect(() => {
+    const handleCopyEvent = (e: ClipboardEvent) => {
+      // If we have a selection, use our calculated text for native copy
+      if (selection) {
+        let selectedText = '';
+        const norm = normalizeSelection(selection);
+
+        for (let i = norm.topLine; i <= norm.bottomLine; i++) {
+          const line = bridgedLines.get(i);
+          const text = typeof line === 'string' ? line : (line as LogLine)?.content || '';
+          const { s, e } = getLineSelectionRange(i, norm, text.length);
+          selectedText += text.substring(s, e) + (i === norm.bottomLine ? '' : '\n');
+        }
+
+        if (selectedText) {
+          e.clipboardData?.setData('text/plain', selectedText.trim());
+          e.preventDefault();
+        }
+      }
+    };
+    window.addEventListener('copy', handleCopyEvent);
+    return () => window.removeEventListener('copy', handleCopyEvent);
+  }, [selection, bridgedLines]);
+
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const pos = getPosFromEvent(e);
+    if (!pos) return;
+
+    let selectedText = '';
+    if (selection) {
+      const norm = normalizeSelection(selection);
+      if (norm.topLine !== norm.bottomLine || norm.topChar !== norm.bottomChar) {
+        for (let i = norm.topLine; i <= norm.bottomLine; i++) {
+          const line = bridgedLines.get(i);
+          const text = typeof line === 'string' ? line : (line as LogLine)?.content || '';
+          const { s, e } = getLineSelectionRange(i, norm, text.length);
+          selectedText += text.substring(s, e) + (i === norm.bottomLine ? '' : '\n');
+        }
+      }
+    }
+
+    const line = bridgedLines.get(pos.lineIndex);
+    const originalIndex = (line && typeof line !== 'string') ? (line as LogLine).index : pos.lineIndex;
+
+    setContextMenu({ x: e.clientX, y: e.clientY, text: selectedText.trim(), lineIndex: originalIndex });
+  };
+
+  const draw = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !Number.isFinite(viewportWidth) || viewportWidth <= 0 || !Number.isFinite(viewportHeight) || viewportHeight <= 0) return;
+
+    const ctx = canvas.getContext('2d', { alpha: false });
+    if (!ctx) return;
+
+    try {
+      const dpr = window.devicePixelRatio || 1;
+      const targetWidth = Math.floor(viewportWidth * dpr);
+      const targetHeight = Math.floor(viewportHeight * dpr);
+
+      if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
+        canvas.width = targetWidth;
+        canvas.height = targetHeight;
+      }
+
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      // Read scroll position directly from DOM for frame-perfect rendering
+      const currentScrollTop = containerRef.current?.scrollTop || 0;
+      const currentScrollLeft = containerRef.current?.scrollLeft || 0;
+      const drawEffectiveScroll = useScrollScaling && maxPhysicalScroll > 0
+        ? (currentScrollTop / maxPhysicalScroll) * maxLogicalScroll
+        : currentScrollTop;
+      const safeScrollTop = Number.isFinite(drawEffectiveScroll) ? drawEffectiveScroll : 0;
+      const safeScrollLeft = Number.isFinite(currentScrollLeft) ? currentScrollLeft : 0;
+
+      // --- Draw Overview Ruler ---
+      const rulerWidth = 12;
+      const rulerX = viewportWidth - rulerWidth;
+      ctx.fillStyle = '#252526';
+      ctx.fillRect(rulerX, 0, rulerWidth, viewportHeight);
+
+      // Draw markers for layers/search
+      Object.entries(layerStats).forEach(([id, stats]: [string, any]) => {
+        const color = id === 'search' ? '#facc15' : '#3b82f6';
+        ctx.fillStyle = color;
+        stats.distribution.forEach((v: number, idx: number) => {
+          if (v > 0) {
+            const h = Math.max(2, v * (viewportHeight / 20));
+            ctx.globalAlpha = 0.5;
+            ctx.fillRect(rulerX + 2, idx * (viewportHeight / 20), rulerWidth - 4, h);
+            ctx.globalAlpha = 1.0;
+          }
+        });
+      });
+
+      // Draw markers for bookmarks
+      const bookmarkIndices = Object.keys(bookmarks).map(Number);
+      if (bookmarkIndices.length > 0) {
+        ctx.fillStyle = '#fbbf24';
+        bookmarkIndices.forEach(idx => {
+          const yPos = (idx / totalLines) * viewportHeight;
+          ctx.fillRect(rulerX, yPos, rulerWidth, 2);
+        });
+      }
+
+      // Draw viewport indicator in ruler (uses drawEffectiveScroll, not the outer effectiveScrollTop)
+      const viewStart = (drawEffectiveScroll / realTotalHeight) * viewportHeight;
+      const viewSize = (viewportHeight / realTotalHeight) * viewportHeight;
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+      ctx.strokeRect(rulerX, viewStart, rulerWidth, Math.max(5, viewSize));
+
+      // 只有在有数据时才填充背景
+      if (totalLines > 0) {
+        ctx.fillStyle = '#1e1e1e';
+        ctx.fillRect(0, 0, viewportWidth - rulerWidth, viewportHeight);
+
+        // If lines are not yet loaded into the bridge, show a loading message
+        if (bridgedLines.size === 0) {
+          ctx.font = '14px "JetBrains Mono"';
+          ctx.fillStyle = '#aaa';
+          ctx.textAlign = 'center';
+          ctx.fillText('Loading lines...', (viewportWidth - rulerWidth) / 2, viewportHeight / 2);
+          return;
+        }
+      } else {
+        ctx.clearRect(0, 0, viewportWidth, viewportHeight);
+        return;
+      }
+
+      const firstVisibleY = startIndex * lineHeight - safeScrollTop;
+
+      for (let i = startIndex; i < endIndex; i++) {
+        if (i >= totalLines) break;
+        const line = bridgedLines.get(i);
+        const y = firstVisibleY + (i - startIndex) * lineHeight;
+        if (y + lineHeight < 0 || y > viewportHeight) continue;
+
+        const isLogLine = line && typeof line !== 'string';
+        const logLine = isLogLine ? (line as LogLine) : null;
+        const content = typeof line === 'string' ? line : logLine?.content || '';
+        const isMarked = logLine?.isMarked;
+
+        // 1. Backgrounds
+        const rowStyle = (line as any)?.rowStyle;
+        if (highlightedIndex === i) {
+          ctx.fillStyle = 'rgba(59, 130, 246, 0.2)';
+          ctx.fillRect(0, y, viewportWidth, lineHeight);
+        } else if (rowStyle?.backgroundColor) {
+          ctx.fillStyle = rowStyle.backgroundColor;
+          ctx.fillRect(0, y, viewportWidth, lineHeight);
+        } else if (isMarked) {
+          ctx.fillStyle = 'rgba(245, 158, 11, 0.08)';
+          ctx.fillRect(0, y, viewportWidth, lineHeight);
+        }
+
+        // 2. Selection
+        if (selection) {
+          const norm = normalizeSelection(selection);
+          if (i >= norm.topLine && i <= norm.bottomLine) {
+            const { s, e } = getLineSelectionRange(i, norm, content.length);
+            ctx.fillStyle = 'rgba(38, 79, 120, 0.6)';
+            ctx.fillRect(gutterWidth + s * charWidthRef.current - safeScrollLeft, y, (e - s) * charWidthRef.current, lineHeight);
+          }
+        }
+
+        // 3. Gutter
+        ctx.fillStyle = '#1e1e1e';
+        ctx.fillRect(0, y, gutterWidth - 5, lineHeight);
+
+        ctx.font = '10px "JetBrains Mono", monospace';
+        ctx.fillStyle = highlightedIndex === i ? '#60a5fa' : '#666';
+        ctx.textAlign = 'right';
+        ctx.fillText((i + 1).toLocaleString(), gutterWidth - 15, y + lineHeight / 2 + 4);
+
+        if (isMarked) {
+          ctx.fillStyle = '#fbbf24';
+          ctx.textAlign = 'center';
+          ctx.font = '12px "JetBrains Mono"';
+          ctx.fillText(logLine?.bookmarkComment ? '★' : '●', 15, y + lineHeight / 2 + 4);
+
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillRect(0, y, 2, lineHeight);
+        }
+
+        // 4. Content
+        ctx.font = font;
+        ctx.textAlign = 'left';
+        const contentX = gutterWidth - safeScrollLeft;
+
+        if (logLine?.highlights && logLine.highlights.length > 0) {
+          let lastIdx = 0;
+          const sorted = [...logLine.highlights].sort((a, b) => a.start - b.start);
+          sorted.forEach(h => {
+            if (h.start > lastIdx) {
+              ctx.fillStyle = '#d4d4d4';
+              ctx.fillText(content.substring(lastIdx, h.start), contentX + lastIdx * charWidthRef.current, y + lineHeight / 2 + 4);
+            }
+            const opacity = (h.opacity || 100) / 100;
+            const hText = content.substring(h.start, h.end);
+            if (h.isSearch || h.color === '#facc15') {
+              ctx.fillStyle = h.color;
+              ctx.fillRect(contentX + h.start * charWidthRef.current, y + 2, hText.length * charWidthRef.current, lineHeight - 4);
+              ctx.fillStyle = '#000';
+            } else {
+              ctx.fillStyle = h.color.startsWith('#') ? `${h.color}${Math.floor(opacity * 255).toString(16).padStart(2, '0')}` : h.color;
+            }
+            ctx.fillText(hText, contentX + h.start * charWidthRef.current, y + lineHeight / 2 + 4);
+            lastIdx = h.end;
+          });
+          if (lastIdx < content.length) {
+            ctx.fillStyle = '#d4d4d4';
+            ctx.fillText(content.substring(lastIdx), contentX + lastIdx * charWidthRef.current, y + lineHeight / 2 + 4);
+          }
+        } else {
+          ctx.fillStyle = rowStyle?.color || '#d4d4d4';
+          ctx.fillText(content, contentX, y + lineHeight / 2 + 4);
+        }
+      }
+    } catch (err) {
+      console.error('Canvas draw error:', err);
+    }
+  }, [viewportWidth, viewportHeight, startIndex, endIndex, bridgedLines, selection, highlightedIndex, totalLines, layerStats, bookmarks, useScrollScaling, maxPhysicalScroll, maxLogicalScroll, lineHeight]);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(frame);
+  }, [draw]);
 
   return (
     <div
       ref={containerRef}
-      onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
-      onContextMenu={(e) => handleContextMenu(e)}
-      className="flex-1 overflow-auto bg-[#1e1e1e] font-mono text-[12px] relative custom-scrollbar select-text"
+      className="flex-1 overflow-auto bg-[#1e1e1e] relative custom-scrollbar"
+      onScroll={(e) => {
+        const st = e.currentTarget.scrollTop;
+        const sl = e.currentTarget.scrollLeft;
+        // Directly update canvas position via DOM for instant visual sync (no React state lag)
+        if (canvasRef.current) {
+          canvasRef.current.style.transform = `translate3d(${sl}px, ${st}px, 0)`;
+        }
+        setScrollTop(st);
+        setScrollLeft(sl);
+      }}
+      onMouseDown={handleMouseDown}
+      onContextMenu={handleContextMenu}
+      onClick={handleClick}
     >
-      {/* 虚拟高度占位层 */}
-      <div style={{ height: `${virtualTotalHeight}px`, width: '100%', position: 'relative' }}>
-        {/* 内容吸附层：通过 translate3d 实现高性能的平滑移动 */}
-        <div
-          className="absolute top-0 left-0 min-w-full w-fit will-change-transform"
+      {/* Spacer in normal flow to create scrollable area */}
+      <div style={{ height: virtualTotalHeight, width: maxLineWidth, pointerEvents: 'none' }} />
+
+      {fileId && totalLines > 0 && viewportWidth > 0 && viewportHeight > 0 && (
+        <canvas
+          ref={canvasRef}
           style={{
-            transform: `translate3d(0, ${Math.round(
-              (startIndex * lineHeight - effectiveScrollTop) + scrollTop
-            )}px, 0)`,
-            backfaceVisibility: 'hidden'
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: viewportWidth,
+            height: viewportHeight,
+            transform: `translate3d(${scrollLeft}px, ${scrollTop}px, 0)`,
+            willChange: 'transform',
+            pointerEvents: 'none',
+            zIndex: 1
           }}
+        />
+      )}
+
+      {contextMenu && (
+        <div
+          className="context-menu-popup fixed bg-[#252526] border border-[#454545] shadow-2xl rounded py-1 min-w-[160px] z-[1000] text-[12px]"
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+          onMouseDown={e => e.stopPropagation()}
         >
-          {visibleLines.map((line, idx) => {
-            const absoluteIdx = startIndex + idx;
-            if (absoluteIdx >= totalLines) return null;
-
-            const isHighlighted = highlightedIndex === absoluteIdx;
-            const isLogLine = line && typeof line !== 'string';
-            // originalIndex 表示在原始物理文件中的行号
-            const originalIndex = line ? (isLogLine ? (line as LogLine).index : absoluteIdx) : absoluteIdx;
-            const isMarked = isLogLine && (line as LogLine).isMarked;
-
-            return (
-              <div
-                key={`${originalIndex}-${idx}`}
-                onClick={() => onLineClick?.(absoluteIdx)}
-                onContextMenu={(e) => handleContextMenu(e, originalIndex)}
-                className={`flex group hover:bg-[#2a2d2e] px-4 h-[20px] items-center whitespace-pre border-l-2 transition-colors cursor-default overflow-hidden
-                  ${isMarked ? 'border-yellow-500' : 'border-transparent'}
-                  ${isHighlighted ? 'bg-blue-500/20' : ''}`}
-                style={{ height: '20px', minHeight: '20px', maxHeight: '20px' }}
-              >
-                {/* 行号栏：显示虚拟行号，悬停提示物理行号 */}
-                <div
-                  className={`w-20 text-right pr-4 shrink-0 select-none text-[10px] flex items-center justify-end ${isHighlighted ? 'text-blue-400 font-semibold' : 'text-gray-600'}`}
-                >
-                  <span className="flex items-center gap-1 group/gutter min-w-[32px] justify-end">
-                    {!isMarked && (
-                      <span
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onToggleBookmark?.(originalIndex);
-                        }}
-                        className="text-gray-500/0 group-hover/gutter:text-gray-500/40 text-[11px] cursor-pointer transition-all hover:scale-125 select-none pr-1"
-                        title={`点击添加书签 (物理行号: #${(originalIndex + 1).toLocaleString()})`}
-                      >
-                        ●
-                      </span>
-                    )}
-                    {isMarked && (
-                      <span
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          const rect = e.currentTarget.getBoundingClientRect();
-                          setCommentPopover({
-                            x: rect.right + 10,
-                            y: rect.top,
-                            lineIndex: originalIndex,
-                            comment: (line as LogLine).bookmarkComment || ''
-                          });
-                        }}
-                        className={`text-amber-400 text-[11px] cursor-help hover:scale-125 transition-transform ${(line as LogLine).bookmarkComment ? 'drop-shadow-[0_0_3px_rgba(251,191,36,0.8)]' : 'opacity-60'} pr-1`}
-                        title={(line as LogLine).bookmarkComment || "添加备注..."}
-                      >
-                        {(line as LogLine).bookmarkComment ? '★' : '●'}
-                      </span>
-                    )}
-                    <span
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onToggleBookmark?.(originalIndex);
-                      }}
-                      className="cursor-pointer hover:text-white transition-colors py-1"
-                      title={`点击切换书签 (物理行号: #${(originalIndex + 1).toLocaleString()})`}
-                    >
-                      {(absoluteIdx + 1).toLocaleString()}
-                    </span>
-                  </span>
-                </div>
-                <div className="flex-1 text-[#d4d4d4] overflow-hidden whitespace-pre min-w-0 pointer-events-auto select-text">{renderLineContent(line)}</div>
-              </div>
-            );
-          })}
+          {contextMenu.text && (
+            <>
+              <button className="w-full text-left px-3 py-1.5 hover:bg-blue-600 text-gray-200" onClick={() => { navigator.clipboard.writeText(contextMenu.text); setContextMenu(null); }}>复制选中内容</button>
+              <button className="w-full text-left px-3 py-1.5 hover:bg-blue-600 text-gray-200" onClick={() => { onAddLayer?.(LayerType.HIGHLIGHT, { query: contextMenu.text, color: '#facc15' }); setContextMenu(null); }}>以此高亮</button>
+              <button className="w-full text-left px-3 py-1.5 hover:bg-blue-600 text-gray-200" onClick={() => { onAddLayer?.(LayerType.FILTER, { query: contextMenu.text }); setContextMenu(null); }}>以此过滤</button>
+              <div className="h-[1px] bg-[#333] my-1" />
+            </>
+          )}
+          <button className="w-full text-left px-3 py-1.5 hover:bg-blue-600 text-gray-200" onClick={() => { onToggleBookmark?.(contextMenu.lineIndex!); setContextMenu(null); }}>切换书签</button>
+          <button className="w-full text-left px-3 py-1.5 hover:bg-blue-600 text-gray-200" onClick={() => {
+            const line = bridgedLines.get(contextMenu.lineIndex!);
+            navigator.clipboard.writeText(typeof line === 'string' ? line : (line as LogLine)?.content || '');
+            setContextMenu(null);
+          }}>复制整行</button>
         </div>
-      </div>
+      )}
 
-      {/* 自定义右键菜单 */}
-      {
-        contextMenu && (
-          <div
-            style={{ position: 'fixed', top: contextMenu.y, left: contextMenu.x, zIndex: 1000 }}
-            className="context-menu-popup bg-[#252526] border border-[#454545] shadow-2xl rounded py-1 min-w-[160px] flex flex-col ring-1 ring-black/50 animate-in fade-in zoom-in-95 duration-100"
-            onMouseDown={e => e.stopPropagation()}
-          >
-            {contextMenu.text && (
-              <>
-                <div className="px-3 py-1 text-[9px] uppercase font-bold text-gray-500 border-b border-[#333] mb-1">选中文本: "{contextMenu.text.length > 15 ? contextMenu.text.substring(0, 15) + '...' : contextMenu.text}"</div>
-                <button
-                  onClick={() => { onAddLayer?.(LayerType.FILTER, { query: contextMenu.text }); setContextMenu(null); }}
-                  className="px-3 py-1.5 hover:bg-blue-600 text-gray-200 hover:text-white text-xs flex justify-between items-center transition-colors"
-                >
-                  <span>以此过滤</span>
-                  <span className="opacity-40 text-[10px]">Filter</span>
-                </button>
-                <button
-                  onClick={() => { onAddLayer?.(LayerType.HIGHLIGHT, { query: contextMenu.text, color: '#facc15' }); setContextMenu(null); }}
-                  className="px-3 py-1.5 hover:bg-blue-600 text-gray-200 hover:text-white text-xs flex justify-between items-center transition-colors"
-                >
-                  <span>以此高亮</span>
-                  <span className="opacity-40 text-[10px]">Highlight</span>
-                </button>
-                <button
-                  onClick={() => handleCopy(contextMenu.text)}
-                  className="px-3 py-1.5 hover:bg-blue-600 text-gray-200 hover:text-white text-xs flex justify-between items-center transition-colors"
-                >
-                  <span>复制选中内容</span>
-                  <span className="opacity-40 text-[10px]">Copy</span>
-                </button>
-                <div className="h-[1px] bg-[#333] my-1" />
-              </>
-            )}
-
-            {contextMenu.lineIndex !== undefined && (
-              <button
-                onClick={() => { onToggleBookmark?.(contextMenu.lineIndex!); setContextMenu(null); }}
-                className="px-3 py-1.5 hover:bg-blue-600 text-gray-200 hover:text-white text-xs flex justify-between items-center transition-colors"
-              >
-                <span>{bridgedLines.get(startIndex + (contextMenu.lineIndex - (bridgedLines.get(contextMenu.lineIndex) as LogLine)?.index || 0)) ? '切换书签' : '切换书签'}</span>
-                <span className="opacity-40 text-[10px]">F2</span>
-              </button>
-            )}
-
-            <button
-              onClick={() => {
-                const line = bridgedLines.get(startIndex + (visibleLines.findIndex(l => (l as LogLine)?.index === contextMenu.lineIndex)));
-                const content = typeof line === 'string' ? line : (line as LogLine)?.content || '';
-                handleCopy(content);
-              }}
-              className="px-3 py-1.5 hover:bg-blue-600 text-gray-200 hover:text-white text-xs flex justify-between items-center transition-colors"
-            >
-              <span>复制整行</span>
-              <span className="opacity-40 text-[10px]">Copy Line</span>
-            </button>
-          </div>
-        )
-      }
-
-      {/* 书签注释 Popover */}
-      {
-        commentPopover && (
-          <BookmarkPopover
-            x={commentPopover.x}
-            y={commentPopover.y}
-            lineIndex={commentPopover.lineIndex}
-            initialComment={commentPopover.comment}
-            onSave={(c) => handleUpdateComment(commentPopover.lineIndex, c)}
-            onRemove={() => {
-              onToggleBookmark?.(commentPopover.lineIndex);
-              setCommentPopover(null);
-            }}
-            onClose={() => setCommentPopover(null)}
-          />
-        )
-      }
-    </div >
+      {commentPopover && (
+        <BookmarkPopover
+          x={commentPopover.x}
+          y={commentPopover.y}
+          lineIndex={commentPopover.lineIndex}
+          initialComment={commentPopover.comment}
+          onSave={async (c) => { await onUpdateBookmarkComment?.(commentPopover.lineIndex, c); setCommentPopover(null); }}
+          onRemove={() => { onToggleBookmark?.(commentPopover.lineIndex); setCommentPopover(null); }}
+          onClose={() => setCommentPopover(null)}
+        />
+      )}
+    </div>
   );
 };

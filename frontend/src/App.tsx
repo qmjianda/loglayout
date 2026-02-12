@@ -153,6 +153,7 @@ const App: React.FC = () => {
   // Search Mode for UI Widget (Highlight vs Filter)
   // This is purely UI state for the widget, though it might sync with searchConfig.mode later
   const [searchMode, setSearchMode] = useState<'highlight' | 'filter'>('highlight');
+  const [canvasSelectedText, setCanvasSelectedText] = useState('');
 
   // ===== UI 状态控制 (UI State) =====
   // 处理各种面板显隐、滚动定位、进度条、工作区根目录等。
@@ -161,7 +162,8 @@ const App: React.FC = () => {
     undo,
     redo,
     setSearchQuery: (q: string) => search.setSearchQuery(q), // Connect to search logic
-    searchQuery: search.searchQuery // Connect to search logic
+    searchQuery: search.searchQuery, // Connect to search logic
+    canvasSelectedText
   });
 
   const {
@@ -683,6 +685,7 @@ const App: React.FC = () => {
                                 onAddLayer={(type, config) => addLayer(type, config)}
                                 onToggleBookmark={handleToggleBookmark}
                                 onUpdateBookmarkComment={handleUpdateBookmarkComment}
+                                onSelectedTextChange={setCanvasSelectedText}
                                 updateTrigger={bridgedUpdateTrigger}
                               />
                             )}

@@ -282,7 +282,7 @@ class PipelineWorker(CustomThread):
         self._processes = []
 
 class StatsWorker(CustomThread):
-    def __init__(self, rg_path, layers, file_path, total_lines):
+    def __init__(self, rg_path, layers, file_path, total_lines, search_config=None):
         super().__init__()
         self.finished = Signal(str)
         self.error = Signal(str)
@@ -290,6 +290,7 @@ class StatsWorker(CustomThread):
         self.layers = layers
         self.file_path = file_path
         self.total_lines = max(1, total_lines)
+        self.search_config = search_config
         self._is_running = True
         self._processes = []
 
@@ -313,6 +314,11 @@ class StatsWorker(CustomThread):
                     active_filters.append(q_conf)
                 if not q_conf: continue
                 tasks.append((layer, l_id, q_conf, current_filters))
+            
+            # Add searching stats as a virtual layer
+            if self.search_config and self.search_config.get('query'):
+                tasks.append((None, 'search', self.search_config, []))
+
             with ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 4)) as executor:
                 future_to_lid = {}
                 for layer, l_id, q_conf, filters in tasks:
@@ -596,7 +602,7 @@ class FileBridge(SearchMixin):
             
             # 更新统计（仅针对有查询的渲染层）
             if any(hasattr(inst, 'query') and inst.query for inst in session.rendering_instances):
-                stat_worker = StatsWorker(self._rg_path, session.rendering_instances, session.path, len(session.line_offsets))
+                stat_worker = StatsWorker(self._rg_path, session.rendering_instances, session.path, len(session.line_offsets), session.search_config)
                 session.workers['stats'] = stat_worker
                 stat_worker.finished.connect(lambda stats: self.statsFinished.emit(file_id, stats))
                 stat_worker.start()
@@ -624,8 +630,8 @@ class FileBridge(SearchMixin):
             worker.finished.connect(lambda indices, matches: self._on_pipeline_finished(file_id, indices, matches))
             worker.error.connect(lambda e: self.operationError.emit(file_id, "pipeline", e))
             worker.start()
-        if any(l.get('enabled') and l.get('type') in ['HIGHLIGHT', 'FILTER', 'LEVEL'] for l in session.layers):
-            stat_worker = StatsWorker(self._rg_path, session.layer_instances, session.path, len(session.line_offsets))
+        if any(l.get('enabled') and l.get('type') in ['HIGHLIGHT', 'FILTER', 'LEVEL'] for l in session.layers) or (session.search_config and session.search_config.get('query')):
+            stat_worker = StatsWorker(self._rg_path, session.layer_instances, session.path, len(session.line_offsets), session.search_config)
             session.workers['stats'] = stat_worker
             stat_worker.finished.connect(lambda stats: self.statsFinished.emit(file_id, stats))
             stat_worker.start()

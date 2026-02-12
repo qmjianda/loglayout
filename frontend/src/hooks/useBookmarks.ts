@@ -37,10 +37,15 @@ export const useBookmarks = (activeFileId: string | null) => {
             const indices = Object.keys(b).map(Number);
             if (indices.length > 0) {
                 const lines = await getLinesByIndices(activeFileId, indices.slice(0, 50));
+                console.debug('[useBookmarks] Preview fetch:', { indices, linesReturned: lines?.length, lines });
                 const newPreviews: Record<number, string> = {};
-                lines.forEach(l => {
-                    newPreviews[l.index] = l.text.length > 60 ? l.text.slice(0, 60) + '...' : l.text;
-                });
+                if (Array.isArray(lines)) {
+                    lines.forEach(l => {
+                        if (l && typeof l.index === 'number' && typeof l.text === 'string') {
+                            newPreviews[l.index] = l.text.length > 60 ? l.text.slice(0, 60) + '...' : l.text;
+                        }
+                    });
+                }
                 setPreviews(newPreviews);
             } else {
                 setPreviews({});
@@ -71,8 +76,9 @@ export const useBookmarks = (activeFileId: string | null) => {
         });
 
         try {
-            const updated = await apiToggleBookmark(activeFileId, lineIndex);
-            setBookmarks(updated);
+            await apiToggleBookmark(activeFileId, lineIndex);
+            // Refresh both bookmarks AND previews
+            setRefreshTrigger(t => t + 1);
         } catch (e) {
             console.error('[useBookmarks] Toggle error:', e);
             setRefreshTrigger(t => t + 1); // Rollback/Refresh
@@ -89,8 +95,9 @@ export const useBookmarks = (activeFileId: string | null) => {
         }));
 
         try {
-            const updated = await apiUpdateComment(activeFileId, lineIndex, comment);
-            setBookmarks(updated);
+            await apiUpdateComment(activeFileId, lineIndex, comment);
+            // Refresh both bookmarks AND previews
+            setRefreshTrigger(t => t + 1);
         } catch (e) {
             console.error('[useBookmarks] Comment update error:', e);
             setRefreshTrigger(t => t + 1);
