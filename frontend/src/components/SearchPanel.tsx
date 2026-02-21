@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useSearchHistory, SearchHistoryItem } from '../hooks/useSearchHistory';
 
 interface SearchPanelProps {
   onSearch: (query: string) => void;
@@ -14,7 +15,11 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({
 }) => {
   const [inputValue, setInputValue] = useState('');
   const [isRegexValid, setIsRegexValid] = useState(true);
+  const [showHistory, setShowHistory] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const historyRef = useRef<HTMLDivElement>(null);
+  
+  const { searchHistory, addToHistory, removeFromHistory, clearHistory } = useSearchHistory();
 
   // 搜索防抖 (200ms)
   useEffect(() => {
@@ -42,6 +47,17 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({
     inputRef.current?.focus();
   }, []);
 
+  // Click outside to close history dropdown
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (historyRef.current && !historyRef.current.contains(e.target as Node)) {
+        setShowHistory(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     // 处理快捷键
     if (e.altKey) {
@@ -61,6 +77,14 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({
 
     if (e.key === 'Enter') {
       e.preventDefault();
+      // Add to search history on Enter
+      if (inputValue.trim()) {
+        addToHistory(inputValue, {
+          regex: config.regex,
+          caseSensitive: config.caseSensitive,
+          wholeWord: config.wholeWord
+        });
+      }
       if (e.shiftKey) {
         onNavigate?.('prev');
       } else {
@@ -68,7 +92,11 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({
       }
     } else if (e.key === 'Escape') {
       setInputValue('');
+      setShowHistory(false);
       onSearch('');
+    } else if (e.key === 'ArrowDown' && showHistory && searchHistory.length > 0) {
+      e.preventDefault();
+      setShowHistory(true);
     }
   };
 
@@ -76,6 +104,29 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({
     setInputValue('');
     onSearch('');
     inputRef.current?.focus();
+  };
+
+  const handleHistoryClick = (item: SearchHistoryItem) => {
+    setInputValue(item.query);
+    setConfig(prev => ({
+      ...prev,
+      regex: item.config.regex,
+      caseSensitive: item.config.caseSensitive,
+      wholeWord: item.config.wholeWord || false
+    }));
+    onSearch(item.query);
+    setShowHistory(false);
+  };
+
+  const formatTimestamp = (timestamp: number) => {
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diff = now.getTime() - date.getTime();
+    
+    if (diff < 60000) return '刚刚';
+    if (diff < 3600000) return `${Math.floor(diff / 60000)}分钟前`;
+    if (diff < 86400000) return `${Math.floor(diff / 3600000)}小时前`;
+    return date.toLocaleDateString('zh-CN');
   };
 
   return (
@@ -116,6 +167,7 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             onKeyDown={handleKeyDown}
+            onFocus={() => searchHistory.length > 0 && setShowHistory(true)}
             placeholder={config.regex ? "输入正则表达式..." : "搜索日志..."}
             className="w-full bg-transparent text-white text-xs px-2 py-1.5 focus:outline-none pr-28"
           />
@@ -128,6 +180,17 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({
                 title="清除"
               >
                 <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="3" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            )}
+            {searchHistory.length > 0 && (
+              <button
+                onClick={() => setShowHistory(!showHistory)}
+                className={`w-5 h-5 flex items-center justify-center rounded text-gray-400 hover:text-white cursor-pointer transition-colors ${showHistory ? 'text-blue-400' : ''}`}
+                title="搜索历史"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
               </button>
             )}
             <button
@@ -153,6 +216,56 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({
             </button>
           </div>
         </div>
+        
+        {/* Search History Dropdown */}
+        {showHistory && searchHistory.length > 0 && (
+          <div 
+            ref={historyRef}
+            className="absolute top-full left-0 right-0 mt-1 bg-[#2d2d2d] border border-white/10 rounded-lg shadow-xl z-50 max-h-60 overflow-y-auto custom-scrollbar"
+          >
+            <div className="flex items-center justify-between px-3 py-2 border-b border-white/5">
+              <span className="text-[10px] text-gray-500 uppercase font-bold">搜索历史</span>
+              <button
+                onClick={() => clearHistory()}
+                className="text-[9px] text-gray-500 hover:text-red-400 cursor-pointer transition-colors"
+              >
+                清空
+              </button>
+            </div>
+            <div className="py-1">
+              {searchHistory.map((item, index) => (
+                <div
+                  key={index}
+                  className="flex items-center justify-between px-3 py-2 hover:bg-[#3c3c3c] cursor-pointer group"
+                  onClick={() => handleHistoryClick(item)}
+                >
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                    <span className="text-[10px] text-gray-400 truncate font-mono">{item.query}</span>
+                    <div className="flex gap-1 shrink-0">
+                      {item.config.regex && <span className="text-[8px] px-1 bg-blue-500/20 text-blue-400 rounded">.*</span>}
+                      {item.config.caseSensitive && <span className="text-[8px] px-1 bg-blue-500/20 text-blue-400 rounded">Aa</span>}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-[9px] text-gray-600">{formatTimestamp(item.timestamp)}</span>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeFromHistory(index);
+                      }}
+                      className="opacity-0 group-hover:opacity-100 w-4 h-4 flex items-center justify-center text-gray-500 hover:text-red-400 transition-all"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        
         {!isRegexValid && (
           <div className="absolute -bottom-4 left-0 text-[9px] text-red-400">无效的正则表达式</div>
         )}
@@ -185,7 +298,7 @@ export const SearchPanel: React.FC<SearchPanelProps> = ({
           <div className="p-3 bg-blue-500/5 border border-blue-500/10 rounded-lg">
             <p className="text-[10px] text-blue-400 italic flex items-start">
               <svg className="w-3 h-3 mr-1.5 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2.5" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-              从图层面板使用“高亮图层”可创建永久的多颜色规则。
+              从图层面板使用"高亮图层"可创建永久的多颜色规则。
             </p>
           </div>
         </div>

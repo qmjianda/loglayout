@@ -64,7 +64,7 @@ graph TD
 | | **Bug Fix** | Resolved FileTree sync, packaging paths, and special character search filtering. |
 | **2026-02-04** | **Stability** | **CRITICAL**: Fixed signal corruption across sessions. Improved worker/zombie cleanup. |
 | | **Refactor** | New `frontend/utils`, eliminated code duplication in `App.tsx` and `useFileManagement`. |
-| **2026-02-02** | **Arch Refactor**| **PyQt → FastAPI + pywebview migration**. Complete project reorganization. |
+| **2026-02-02** | **Arch Refactor**| **FastAPI + pywebview migration**. Complete project reorganization. |
 | | **Search/Fix** | "Nearest Next" logic (O(log N)). Fixed UI flickering and browser-mode dialog fallbacks. |
 
 [... previous change logs archived ...]

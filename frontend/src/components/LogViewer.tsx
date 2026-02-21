@@ -294,6 +294,42 @@ export const LogViewer: React.FC<LogViewerProps> = ({
     }
   };
 
+  // Double-click handler: select the word under cursor
+  const handleDoubleClick = (e: React.MouseEvent) => {
+    const pos = getPosFromEvent(e);
+    if (!pos || pos.x < gutterWidth) return;
+
+    const line = bridgedLines.get(pos.lineIndex);
+    const content = typeof line === 'string' ? line : (line as LogLine)?.content || '';
+    if (!content) return;
+
+    // Find word boundaries (alphanumeric + underscore)
+    const charIndex = pos.charIndex;
+    let start = charIndex;
+    let end = charIndex;
+
+    // Expand left
+    while (start > 0 && /[\w]/.test(content[start - 1])) {
+      start--;
+    }
+
+    // Expand right
+    while (end < content.length && /[\w]/.test(content[end])) {
+      end++;
+    }
+
+    // Only select if we have a valid word
+    if (end > start) {
+      setSelection({
+        startLine: pos.lineIndex,
+        startChar: start,
+        endLine: pos.lineIndex,
+        endChar: end
+      });
+      setIsSelecting(false);
+    }
+  };
+
   // Report selected text to parent (for Ctrl+F auto-fill etc.)
   useEffect(() => {
     if (!selection || !onSelectedTextChange) return;
@@ -458,7 +494,8 @@ export const LogViewer: React.FC<LogViewerProps> = ({
         // 1. Backgrounds
         const rowStyle = (line as any)?.rowStyle;
         if (highlightedIndex === i) {
-          ctx.fillStyle = 'rgba(59, 130, 246, 0.2)';
+          // Current line highlight - use a more visible cyan tint
+          ctx.fillStyle = 'rgba(34, 211, 238, 0.15)';
           ctx.fillRect(0, y, viewportWidth, lineHeight);
         } else if (rowStyle?.backgroundColor) {
           ctx.fillStyle = rowStyle.backgroundColor;
@@ -468,12 +505,14 @@ export const LogViewer: React.FC<LogViewerProps> = ({
           ctx.fillRect(0, y, viewportWidth, lineHeight);
         }
 
-        // 2. Selection
+        // 2. Selection - draw AFTER highlight to ensure visibility
+        // Use a more contrasting amber/orange color for better visibility
         if (selection) {
           const norm = normalizeSelection(selection);
           if (i >= norm.topLine && i <= norm.bottomLine) {
             const { s, e } = getLineSelectionRange(i, norm, content.length);
-            ctx.fillStyle = 'rgba(38, 79, 120, 0.6)';
+            // Use amber selection color that's more distinct from both highlight and bookmark
+            ctx.fillStyle = 'rgba(245, 158, 11, 0.45)';
             ctx.fillRect(gutterWidth + s * charWidthRef.current - safeScrollLeft, y, (e - s) * charWidthRef.current, lineHeight);
           }
         }
@@ -558,6 +597,7 @@ export const LogViewer: React.FC<LogViewerProps> = ({
       onMouseDown={handleMouseDown}
       onContextMenu={handleContextMenu}
       onClick={handleClick}
+      onDoubleClick={handleDoubleClick}
     >
       {/* Spacer in normal flow to create scrollable area */}
       <div style={{ height: virtualTotalHeight, width: maxLineWidth, pointerEvents: 'none' }} />

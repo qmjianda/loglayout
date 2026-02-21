@@ -16,7 +16,7 @@ LogLayer is a high-performance log analysis tool designed to handle massive log 
 - **Layered Pipeline Engine**: A Python-powered backend pipeline that supports multiple FILTER and HIGHLIGHT layers applied in real-time.
 - **Workspace Session Persistence**: Automatically saves and restores your opened files and layer configurations into a `.loglayer/` folder.
 - **One-Click Offline Packaging**: Build a standalone, portable distribution for Windows and Linux with a single command.
-- **Lightweight Architecture**: Migrated from PyQt to **FastAPI + pywebview**, offering better browser compatibility and smaller footprint.
+- **Lightweight Architecture**: **FastAPI + pywebview** for better browser compatibility and smaller footprint.
 
 ### 🛠 Tech Stack
 - **Backend**: Python 3.10+, **FastAPI**, **uvicorn**, **WebSockets**, `mmap`, `ripgrep`.
@@ -66,7 +66,7 @@ LogLayer 是一款专门针对海量日志文件（1GB+）设计的高性能日�
 - **图层流水线引擎**: 基于 Python 后端的处理流水线，支持多路“过滤器（FILTER）”和“高亮（HIGHLIGHT）”图层叠加。
 - **工作区会话持久化**: 自动保存并恢复已打开的文件列表和图层配置（存储于 `.loglayer/` 目录）。
 - **一键离线发布**: 提供一键打包脚本，生成支持 Windows 和 Linux 的自包含绿色版离线应用。
-- **轻量化架构**: 从 PyQt 迁移至 **FastAPI + pywebview**，拥有更好的浏览器兼容性且资源占用更低。
+- **轻量化架构**: 采用 **FastAPI + pywebview**，拥有更好的浏览器兼容性且资源占用更低。
 
 ### 🛠 技术栈
 - **后端**: Python 3.10+, **FastAPI**, **uvicorn**, **WebSockets**, `mmap`, `ripgrep`.
