@@ -1,5 +1,13 @@
 import { FileBridgeAPI } from './types';
 
+// Connection state types
+export type ConnectionState = 'connected' | 'connecting' | 'disconnected' | 'reconnecting';
+
+export interface ConnectionStateListener {
+    onStateChange?: (state: ConnectionState) => void;
+    onError?: (error: string) => void;
+}
+
 /**
  * 全端唯一的桥接实例。
  * 负责 React 前端与 Python 后端的通信。
@@ -46,12 +54,33 @@ class WebBridge implements FileBridgeAPI {
 
     private ws: WebSocket | null = null;
 
+    // Connection state
+    private connectionState: ConnectionState = 'disconnected';
+    private stateListeners: Set<(state: ConnectionState) => void> = new Set();
+
+    // Reconnect properties
+    private retryCount = 0;
+    private maxRetries = 10;
+    private baseDelay = 2000;
+    private reconnectTimer: number | null = null;
+
     constructor() {
         this.initWebSocket();
     }
 
     private initWebSocket() {
+        this.setConnectionState('connecting');
         this.ws = new WebSocket(WS_URL);
+
+        this.ws.onopen = () => {
+            this.setConnectionState('connected');
+            this.retryCount = 0;  // Reset on success
+        };
+
+        this.ws.onerror = (event) => {
+            console.error('[Bridge] WS error:', event);
+        };
+
         this.ws.onmessage = (event) => {
             try {
                 const { signal, args } = JSON.parse(event.data);
@@ -62,10 +91,41 @@ class WebBridge implements FileBridgeAPI {
                 console.error('[Bridge] WS message error:', e);
             }
         };
+
         this.ws.onclose = () => {
-            console.warn('[Bridge] WS closed. Retrying in 2s...');
-            setTimeout(() => this.initWebSocket(), 2000);
+            this.setConnectionState('disconnected');
+            this.handleReconnect();
         };
+    }
+
+    private handleReconnect() {
+        if (this.retryCount >= this.maxRetries) {
+            console.error('[Bridge] Max reconnection attempts reached');
+            return;
+        }
+
+        this.retryCount++;
+        const delay = this.baseDelay * Math.pow(2, this.retryCount - 1);
+
+        this.reconnectTimer = window.setTimeout(() => {
+            this.setConnectionState('reconnecting');
+            this.initWebSocket();
+        }, delay);
+    }
+
+    // Connection state methods
+    getConnectionState(): ConnectionState {
+        return this.connectionState;
+    }
+
+    addStateListener(listener: (state: ConnectionState) => void): () => void {
+        this.stateListeners.add(listener);
+        return () => this.stateListeners.delete(listener);
+    }
+
+    private setConnectionState(state: ConnectionState) {
+        this.connectionState = state;
+        this.stateListeners.forEach(cb => cb(state));
     }
 
     private async post(endpoint: string, body: any = {}): Promise<any> {

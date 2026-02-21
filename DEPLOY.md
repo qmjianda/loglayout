@@ -29,9 +29,9 @@ python tools/package_offline.py --exe
 1. 确保已安装 Python 3.10+。
 2. 安装依赖：
    ```bash
-   pip install fastapi uvicorn websockets pywebview psutil
+   pip install -r requirements.txt
    ```
-3. 运行 `LogLayer.bat`。
+3. 运行 `python backend/main.py`。
 
 ---
 

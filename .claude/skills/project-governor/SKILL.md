@@ -8,11 +8,11 @@ description: Enforces the "Document-Code-Test" closed-loop governance for LogLay
 This skill is activated whenever a core logic change or bug fix is requested.
 
 ### 1. Planning Phase (architect_sync)
-- **Action**: Read `PROJECT_MAP.md` and relevant `docs/DESIGN_SPEC.md`.
+- **Action**: Read `PROJECT_MAP.md` for current architecture.
 - **Constraint**: If the change affects multiple modules, update `PROJECT_MAP.md` Coupling Notes BEFORE implementation.
 
 ### 2. Design Phase (spec_update)
-- **Action**: Update `docs/DESIGN_SPEC.md` with:
+- **Action**: For significant logic changes, update `PROJECT_MAP.md` with:
     - `[NEW]` tag for new logic designs.
     - `[UPDATE]` tag for modifications.
     - Explicitly state the "Motivation" and "Coupling Strategy".

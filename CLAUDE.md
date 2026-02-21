@@ -11,10 +11,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Build & Package
 - **Frontend Build**: `npm run build`
-- **Install All Dependencies**: `python tools/install_deps.py`
-- **Source Package (Win)**: `tools/package.bat`
-- **Standalone EXE (Win)**: `tools/package_exe.bat` (Requires `pyinstaller`)
-- **Source Package (Linux)**: `sh tools/package.sh`
+- **Install Dependencies**: `pip install -r requirements.txt` (backend) + `npm install` (frontend)
+- **Package Offline**: `python tools/package_offline.py`
+- **Standalone EXE**: `python tools/package_offline.py --exe` (Requires `pyinstaller`)
 
 ### Testing
 - **Run All Tests**: `pytest tests/`
@@ -28,11 +27,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## ⚖️ Development Workflow & Governance
 
 ### 1. Architecture-First Principle
-- Before any modification, read `PROJECT_MAP.md` and `docs/DESIGN_SPEC.md`.
+- Before any modification, read `PROJECT_MAP.md` for current architecture.
 - No cross-module refactoring without understanding dependencies.
 
 ### 2. Document-Code-Test Closed Loop
-- **Pre-change**: Update `docs/DESIGN_SPEC.md` for logic changes.
+- **Pre-change**: Update `PROJECT_MAP.md` for significant logic changes.
 - **Post-change**: Update `PROJECT_MAP.md` "Current Status" and "Change Log".
 - **Bug Closure**: Every bug fix **MUST** include a reproduction script in `tests/`. A task is "incomplete" without a passing test.
 
